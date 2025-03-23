@@ -1,6 +1,6 @@
 import pytest
 import os
-from services.advanced_cv_parser.ad_cv_parse import AdvancedCVParser
+from services.advanced_cv_parser.advanced_cv_parser import AdvancedCVParser
 
 
 @pytest.mark.integration

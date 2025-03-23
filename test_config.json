@@ -1,0 +1,12 @@
+{
+  "sources": {
+    "perplexity": {
+      "module": "services.job_search.sources.perplexity_source",
+      "class": "PerplexityJobSource",
+      "enabled": true,
+      "priority": 10,
+      "weight": 10,
+      "config": {}
+    }
+  }
+}

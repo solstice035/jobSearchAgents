@@ -2,7 +2,7 @@ import pytest
 import os
 import io
 from unittest.mock import MagicMock, patch
-from services.advanced_cv_parser.ad_cv_parse import AdvancedCVParser
+from services.advanced_cv_parser.advanced_cv_parser import AdvancedCVParser
 
 
 class TestAdvancedCVParser:
