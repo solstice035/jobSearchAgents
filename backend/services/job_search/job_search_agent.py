@@ -14,7 +14,7 @@ from datetime import datetime
 import uuid
 
 # Import the job source implementations
-from .sources import JobSource, PerplexityJobSource
+from .sources import JobSource, PerplexityJobSource, JobSourceRegistry
 
 
 class JobSearchAgent:
@@ -26,15 +26,24 @@ class JobSearchAgent:
     structured format.
     """
     
-    def __init__(self):
-        """Initialize the Job Search Agent."""
-        # Initialize job sources
-        self.sources = {
-            "perplexity": PerplexityJobSource()
-        }
+    def __init__(self, config_file: Optional[str] = None):
+        """
+        Initialize the Job Search Agent.
         
-        # Set the primary source (can be configurable in the future)
-        self.primary_source = self.sources["perplexity"]
+        Args:
+            config_file: Optional path to a registry configuration file
+        """
+        # Initialize the job source registry
+        self.registry = JobSourceRegistry(config_file)
+        
+        # Register default sources if registry is empty
+        if not self.registry.get_all_sources(enabled_only=False):
+            self.registry.register_source(
+                source=PerplexityJobSource(),
+                priority=10,  # Set a high priority for the default source
+                enabled=True,
+                weight=10     # Also set a high weight for load balancing
+            )
         
         # Setup preferences directory
         self.preferences_dir = os.path.expanduser(os.getenv("USER_DATA_DIR", "~/.jobSearchAgent"))
@@ -47,7 +56,8 @@ class JobSearchAgent:
         recency: Optional[str] = None,
         experience_level: Optional[str] = None,
         remote: bool = False,
-        source_name: Optional[str] = None
+        source_name: Optional[str] = None,
+        search_strategy: str = "primary"
     ) -> Dict[str, Any]:
         """
         Search for job opportunities based on specific criteria.
@@ -59,6 +69,7 @@ class JobSearchAgent:
             experience_level: Job experience level (entry, mid, senior)
             remote: Whether to search for remote jobs only
             source_name: Optional name of the specific job source to use
+            search_strategy: Strategy for selecting sources ("primary", "load_balance", "all")
             
         Returns:
             Structured job search results with metadata
@@ -73,9 +84,6 @@ class JobSearchAgent:
         if experience_level and experience_level not in ["entry", "mid", "senior"]:
             raise ValueError("Experience level must be one of: entry, mid, senior")
         
-        # Select the job source to use
-        job_source = self._get_job_source(source_name)
-        
         # Create filters dictionary
         filters = {
             "recency": recency,
@@ -83,18 +91,109 @@ class JobSearchAgent:
             "remote": remote
         }
         
-        # Perform the search
-        raw_results = job_source.search_jobs(keywords, location, filters)
+        # If a specific source is requested, use it
+        if source_name:
+            job_source = self.registry.get_source(source_name)
+            if not job_source:
+                raise ValueError(f"Job source '{source_name}' not found or disabled")
+            
+            # Perform the search with the specific source
+            raw_results = job_source.search_jobs(keywords, location, filters)
+            parsed_jobs = job_source.parse_results(raw_results)
+            normalized_jobs = [job_source.normalize_job(job) for job in parsed_jobs]
+            
+            return {
+                "jobs": normalized_jobs,
+                "metadata": {
+                    "source": job_source.source_name,
+                    "search_criteria": {
+                        "keywords": keywords,
+                        "location": location,
+                        "recency": recency,
+                        "experience_level": experience_level,
+                        "remote": remote
+                    },
+                    "timestamp": datetime.now().isoformat(),
+                    "search_id": str(uuid.uuid4())
+                }
+            }
         
-        # Parse and normalize the results
-        parsed_jobs = job_source.parse_results(raw_results)
-        normalized_jobs = [job_source.normalize_job(job) for job in parsed_jobs]
+        # If no specific source is requested, use the distribution strategy
+        source, raw_results = self.registry.distribute_search(
+            keywords=keywords,
+            location=location,
+            filters=filters,
+            strategy=search_strategy
+        )
         
-        # Return structured results with metadata
+        # If a single source was used
+        if source:
+            parsed_jobs = source.parse_results(raw_results)
+            normalized_jobs = [source.normalize_job(job) for job in parsed_jobs]
+            
+            return {
+                "jobs": normalized_jobs,
+                "metadata": {
+                    "source": source.source_name,
+                    "search_criteria": {
+                        "keywords": keywords,
+                        "location": location,
+                        "recency": recency,
+                        "experience_level": experience_level,
+                        "remote": remote
+                    },
+                    "search_strategy": search_strategy,
+                    "timestamp": datetime.now().isoformat(),
+                    "search_id": str(uuid.uuid4())
+                }
+            }
+        
+        # If multiple sources were used (strategy = "all")
+        elif raw_results and "sources" in raw_results and raw_results["sources"]:
+            all_jobs = []
+            used_sources = []
+            
+            # Process results from each source
+            for source_name in raw_results["sources"]:
+                source_results = raw_results["raw_results"].get(source_name)
+                if not source_results:
+                    continue
+                
+                job_source = self.registry.get_source(source_name)
+                if not job_source:
+                    continue
+                
+                try:
+                    parsed_jobs = job_source.parse_results(source_results)
+                    normalized_jobs = [job_source.normalize_job(job) for job in parsed_jobs]
+                    all_jobs.extend(normalized_jobs)
+                    used_sources.append(source_name)
+                except Exception as e:
+                    logging.error(f"Error processing results from {source_name}: {str(e)}")
+            
+            return {
+                "jobs": all_jobs,
+                "metadata": {
+                    "sources": used_sources,
+                    "search_criteria": {
+                        "keywords": keywords,
+                        "location": location,
+                        "recency": recency,
+                        "experience_level": experience_level,
+                        "remote": remote
+                    },
+                    "search_strategy": search_strategy,
+                    "timestamp": datetime.now().isoformat(),
+                    "search_id": str(uuid.uuid4())
+                }
+            }
+        
+        # No results found
         return {
-            "jobs": normalized_jobs,
+            "jobs": [],
             "metadata": {
-                "source": job_source.source_name,
+                "source": "none",
+                "error": "No enabled job sources found or all sources failed",
                 "search_criteria": {
                     "keywords": keywords,
                     "location": location,
@@ -102,6 +201,7 @@ class JobSearchAgent:
                     "experience_level": experience_level,
                     "remote": remote
                 },
+                "search_strategy": search_strategy,
                 "timestamp": datetime.now().isoformat(),
                 "search_id": str(uuid.uuid4())
             }
@@ -115,7 +215,8 @@ class JobSearchAgent:
         recency: Optional[str] = None,
         experience_level: Optional[str] = None,
         remote: bool = False,
-        source_name: Optional[str] = None
+        source_name: Optional[str] = None,
+        search_strategy: str = "primary"
     ) -> Dict[str, Any]:
         """
         Perform a job search enhanced with user preferences.
@@ -128,6 +229,7 @@ class JobSearchAgent:
             experience_level: Job experience level
             remote: Whether to search for remote jobs only
             source_name: Optional name of the specific job source to use
+            search_strategy: Strategy for selecting sources
             
         Returns:
             Enhanced job search results
@@ -143,7 +245,8 @@ class JobSearchAgent:
                 recency=recency,
                 experience_level=experience_level,
                 remote=remote,
-                source_name=source_name
+                source_name=source_name,
+                search_strategy=search_strategy
             )
         
         # Enhance search keywords with user skills and preferences
@@ -183,9 +286,6 @@ class JobSearchAgent:
                     preferred_job_type = next((jt for jt in job_types 
                                             if jt.lower() in ["full-time", "part-time", "contract", "freelance"]), None)
         
-        # Select the job source to use
-        job_source = self._get_job_source(source_name)
-        
         # Create filters dictionary
         filters = {
             "recency": recency,
@@ -193,18 +293,133 @@ class JobSearchAgent:
             "remote": remote
         }
         
-        # Perform the enhanced search
-        raw_results = job_source.search_jobs(enhanced_keywords, location, filters)
+        # If a specific source is requested, use it
+        if source_name:
+            job_source = self.registry.get_source(source_name)
+            if not job_source:
+                raise ValueError(f"Job source '{source_name}' not found or disabled")
+            
+            # Perform the enhanced search with the specific source
+            raw_results = job_source.search_jobs(enhanced_keywords, location, filters)
+            parsed_jobs = job_source.parse_results(raw_results)
+            normalized_jobs = [job_source.normalize_job(job) for job in parsed_jobs]
+            
+            return {
+                "jobs": normalized_jobs,
+                "metadata": {
+                    "source": job_source.source_name,
+                    "original_criteria": {
+                        "keywords": keywords,
+                        "location": location,
+                        "recency": recency,
+                        "experience_level": experience_level,
+                        "remote": remote
+                    },
+                    "enhanced_criteria": {
+                        "keywords": enhanced_keywords,
+                        "location": location,
+                        "recency": recency,
+                        "experience_level": experience_level or preferred_job_type,
+                        "remote": remote
+                    },
+                    "preferences_used": True,
+                    "timestamp": datetime.now().isoformat(),
+                    "search_id": str(uuid.uuid4())
+                }
+            }
         
-        # Parse and normalize the results
-        parsed_jobs = job_source.parse_results(raw_results)
-        normalized_jobs = [job_source.normalize_job(job) for job in parsed_jobs]
+        # If no specific source is requested, use the distribution strategy
+        source, raw_results = self.registry.distribute_search(
+            keywords=enhanced_keywords,
+            location=location,
+            filters=filters,
+            strategy=search_strategy
+        )
         
-        # Return the enhanced results with original and enhanced metadata
+        # If a single source was used
+        if source:
+            parsed_jobs = source.parse_results(raw_results)
+            normalized_jobs = [source.normalize_job(job) for job in parsed_jobs]
+            
+            return {
+                "jobs": normalized_jobs,
+                "metadata": {
+                    "source": source.source_name,
+                    "original_criteria": {
+                        "keywords": keywords,
+                        "location": location,
+                        "recency": recency,
+                        "experience_level": experience_level,
+                        "remote": remote
+                    },
+                    "enhanced_criteria": {
+                        "keywords": enhanced_keywords,
+                        "location": location,
+                        "recency": recency,
+                        "experience_level": experience_level or preferred_job_type,
+                        "remote": remote
+                    },
+                    "preferences_used": True,
+                    "search_strategy": search_strategy,
+                    "timestamp": datetime.now().isoformat(),
+                    "search_id": str(uuid.uuid4())
+                }
+            }
+        
+        # If multiple sources were used (strategy = "all")
+        elif raw_results and "sources" in raw_results and raw_results["sources"]:
+            all_jobs = []
+            used_sources = []
+            
+            # Process results from each source
+            for source_name in raw_results["sources"]:
+                source_results = raw_results["raw_results"].get(source_name)
+                if not source_results:
+                    continue
+                
+                job_source = self.registry.get_source(source_name)
+                if not job_source:
+                    continue
+                
+                try:
+                    parsed_jobs = job_source.parse_results(source_results)
+                    normalized_jobs = [job_source.normalize_job(job) for job in parsed_jobs]
+                    all_jobs.extend(normalized_jobs)
+                    used_sources.append(source_name)
+                except Exception as e:
+                    logging.error(f"Error processing results from {source_name}: {str(e)}")
+            
+            return {
+                "jobs": all_jobs,
+                "metadata": {
+                    "sources": used_sources,
+                    "original_criteria": {
+                        "keywords": keywords,
+                        "location": location,
+                        "recency": recency,
+                        "experience_level": experience_level,
+                        "remote": remote
+                    },
+                    "enhanced_criteria": {
+                        "keywords": enhanced_keywords,
+                        "location": location,
+                        "recency": recency,
+                        "experience_level": experience_level or preferred_job_type,
+                        "remote": remote
+                    },
+                    "preferences_used": True,
+                    "search_strategy": search_strategy,
+                    "timestamp": datetime.now().isoformat(),
+                    "search_id": str(uuid.uuid4())
+                }
+            }
+        
+        # No results found
         return {
-            "jobs": normalized_jobs,
+            "jobs": [],
             "metadata": {
-                "source": job_source.source_name,
+                "source": "none",
+                "error": "No enabled job sources found or all sources failed",
                 "original_criteria": {
                     "keywords": keywords,
                     "location": location,
@@ -220,6 +435,7 @@ class JobSearchAgent:
                     "remote": remote
                 },
                 "preferences_used": True,
+                "search_strategy": search_strategy,
                 "timestamp": datetime.now().isoformat(),
                 "search_id": str(uuid.uuid4())
             }
@@ -236,8 +452,10 @@ class JobSearchAgent:
         Returns:
             Analysis of the match including score and recommendations
         """
-        # Select the job source to use (use primary source for resume matching)
-        job_source = self.primary_source
+        # Get the primary source for resume matching
+        job_source = self.registry.get_primary_source()
+        if not job_source:
+            raise ValueError("No enabled job sources found for resume matching")
         
         # Prepare the query for the API
         query = (
@@ -345,27 +563,6 @@ class JobSearchAgent:
                 "message": f"Failed to save preferences: {str(e)}"
             }
     
-    def _get_job_source(self, source_name: Optional[str] = None) -> JobSource:
-        """
-        Get the job source to use for a search.
-        
-        Args:
-            source_name: Optional name of the specific job source to use
-            
-        Returns:
-            The selected job source
-            
-        Raises:
-            ValueError: If the specified source name is not found
-        """
-        if not source_name:
-            return self.primary_source
-        
-        if source_name.lower() in self.sources:
-            return self.sources[source_name.lower()]
-        
-        raise ValueError(f"Job source '{source_name}' not found. Available sources: {', '.join(self.sources.keys())}")
-    
     def _extract_key_terms(self, text: str) -> List[str]:
         """
         Extract key terms from a text.
@@ -395,11 +592,181 @@ class JobSearchAgent:
         
         return found_terms
     
-    def list_sources(self) -> List[str]:
+    def list_sources(self) -> List[Dict[str, Any]]:
         """
-        Get a list of available job sources.
+        Get a list of all registered job sources with their information.
         
         Returns:
-            List of job source names
+            List of dictionaries with source information
         """
-        return list(self.sources.keys())
+        return self.registry.get_all_source_info()
+    
+    def get_source_info(self, source_name: str) -> Dict[str, Any]:
+        """
+        Get information about a specific job source.
+        
+        Args:
+            source_name: Name of the job source
+            
+        Returns:
+            Dictionary with source information
+        """
+        return self.registry.get_source_info(source_name)
+    
+    def enable_source(self, source_name: str) -> Dict[str, Any]:
+        """
+        Enable a job source.
+        
+        Args:
+            source_name: Name of the job source to enable
+            
+        Returns:
+            Success status message
+        """
+        if self.registry.enable_source(source_name):
+            return {
+                "status": "success",
+                "message": f"Job source '{source_name}' enabled successfully"
+            }
+        
+        return {
+            "status": "error",
+            "message": f"Job source '{source_name}' not found"
+        }
+    
+    def disable_source(self, source_name: str) -> Dict[str, Any]:
+        """
+        Disable a job source.
+        
+        Args:
+            source_name: Name of the job source to disable
+            
+        Returns:
+            Success status message
+        """
+        if self.registry.disable_source(source_name):
+            return {
+                "status": "success",
+                "message": f"Job source '{source_name}' disabled successfully"
+            }
+        
+        return {
+            "status": "error",
+            "message": f"Job source '{source_name}' not found"
+        }
+    
+    def update_source_priority(self, source_name: str, priority: int) -> Dict[str, Any]:
+        """
+        Update the priority of a job source.
+        
+        Args:
+            source_name: Name of the job source
+            priority: New priority value (higher number = higher priority)
+            
+        Returns:
+            Success status message
+        """
+        if self.registry.set_priority(source_name, priority):
+            return {
+                "status": "success",
+                "message": f"Priority for job source '{source_name}' updated successfully"
+            }
+        
+        return {
+            "status": "error",
+            "message": f"Job source '{source_name}' not found"
+        }
+    
+    def update_source_weight(self, source_name: str, weight: int) -> Dict[str, Any]:
+        """
+        Update the weight of a job source for load balancing.
+        
+        Args:
+            source_name: Name of the job source
+            weight: New weight value (higher number = more traffic)
+            
+        Returns:
+            Success status message
+        """
+        if self.registry.set_weight(source_name, weight):
+            return {
+                "status": "success",
+                "message": f"Weight for job source '{source_name}' updated successfully"
+            }
+        
+        return {
+            "status": "error",
+            "message": f"Job source '{source_name}' not found"
+        }
+    
+    def update_source_config(self, source_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update the configuration of a job source.
+        
+        Args:
+            source_name: Name of the job source
+            config: Configuration updates
+            
+        Returns:
+            Success status message
+        """
+        if self.registry.update_source_config(source_name, config):
+            return {
+                "status": "success",
+                "message": f"Configuration for job source '{source_name}' updated successfully"
+            }
+        
+        return {
+            "status": "error",
+            "message": f"Job source '{source_name}' not found"
+        }
+    
+    def save_registry_config(self, config_file: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Save the current registry configuration to a file.
+        
+        Args:
+            config_file: Path to the configuration file. If not provided, 
+                         a default path will be used.
+            
+        Returns:
+            Success status message
+        """
+        if not config_file:
+            config_file = os.path.join(self.preferences_dir, "job_sources.json")
+        
+        if self.registry.save_config(config_file):
+            return {
+                "status": "success",
+                "message": f"Registry configuration saved successfully to {config_file}"
+            }
+        
+        return {
+            "status": "error",
+            "message": f"Failed to save registry configuration to {config_file}"
+        }
+    
+    def load_registry_config(self, config_file: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Load registry configuration from a file.
+        
+        Args:
+            config_file: Path to the configuration file. If not provided,
+                         a default path will be used.
+            
+        Returns:
+            Success status message
+        """
+        if not config_file:
+            config_file = os.path.join(self.preferences_dir, "job_sources.json")
+        
+        if self.registry.load_config(config_file):
+            return {
+                "status": "success",
+                "message": f"Registry configuration loaded successfully from {config_file}"
+            }
+        
+        return {
+            "status": "error",
+            "message": f"Failed to load registry configuration from {config_file}"
+        }
