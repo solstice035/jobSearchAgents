@@ -13,8 +13,8 @@ from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 import uuid
 
-from .perplexity_client import PerplexityClient
-from .job_parser import parse_job_listings
+# Import the job source implementations
+from .sources import JobSource, PerplexityJobSource
 
 
 class JobSearchAgent:
@@ -28,10 +28,16 @@ class JobSearchAgent:
     
     def __init__(self):
         """Initialize the Job Search Agent."""
-        self.perplexity_client = PerplexityClient()
-        self.preferences_dir = os.path.expanduser(os.getenv("USER_DATA_DIR", "~/.jobSearchAgent"))
+        # Initialize job sources
+        self.sources = {
+            "perplexity": PerplexityJobSource()
+        }
         
-        # Create the preferences directory if it doesn't exist
+        # Set the primary source (can be configurable in the future)
+        self.primary_source = self.sources["perplexity"]
+        
+        # Setup preferences directory
+        self.preferences_dir = os.path.expanduser(os.getenv("USER_DATA_DIR", "~/.jobSearchAgent"))
         os.makedirs(self.preferences_dir, exist_ok=True)
 
     def search_jobs(
@@ -40,7 +46,8 @@ class JobSearchAgent:
         location: Optional[str] = None, 
         recency: Optional[str] = None,
         experience_level: Optional[str] = None,
-        remote: bool = False
+        remote: bool = False,
+        source_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Search for job opportunities based on specific criteria.
@@ -51,6 +58,7 @@ class JobSearchAgent:
             recency: Time filter (month, week, day, hour)
             experience_level: Job experience level (entry, mid, senior)
             remote: Whether to search for remote jobs only
+            source_name: Optional name of the specific job source to use
             
         Returns:
             Structured job search results with metadata
@@ -65,22 +73,28 @@ class JobSearchAgent:
         if experience_level and experience_level not in ["entry", "mid", "senior"]:
             raise ValueError("Experience level must be one of: entry, mid, senior")
         
-        # Perform the search
-        search_results = self.perplexity_client.search_jobs(
-            keywords=keywords,
-            location=location,
-            recency=recency,
-            experience_level=experience_level,
-            remote=remote
-        )
+        # Select the job source to use
+        job_source = self._get_job_source(source_name)
         
-        # Parse the results to extract structured job listings
-        parsed_jobs = parse_job_listings(search_results)
+        # Create filters dictionary
+        filters = {
+            "recency": recency,
+            "experience_level": experience_level,
+            "remote": remote
+        }
+        
+        # Perform the search
+        raw_results = job_source.search_jobs(keywords, location, filters)
+        
+        # Parse and normalize the results
+        parsed_jobs = job_source.parse_results(raw_results)
+        normalized_jobs = [job_source.normalize_job(job) for job in parsed_jobs]
         
         # Return structured results with metadata
         return {
-            "jobs": parsed_jobs,
+            "jobs": normalized_jobs,
             "metadata": {
+                "source": job_source.source_name,
                 "search_criteria": {
                     "keywords": keywords,
                     "location": location,
@@ -100,7 +114,8 @@ class JobSearchAgent:
         location: Optional[str] = None, 
         recency: Optional[str] = None,
         experience_level: Optional[str] = None,
-        remote: bool = False
+        remote: bool = False,
+        source_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Perform a job search enhanced with user preferences.
@@ -112,6 +127,7 @@ class JobSearchAgent:
             recency: Time filter
             experience_level: Job experience level
             remote: Whether to search for remote jobs only
+            source_name: Optional name of the specific job source to use
             
         Returns:
             Enhanced job search results
@@ -126,7 +142,8 @@ class JobSearchAgent:
                 location=location,
                 recency=recency,
                 experience_level=experience_level,
-                remote=remote
+                remote=remote,
+                source_name=source_name
             )
         
         # Enhance search keywords with user skills and preferences
@@ -166,22 +183,28 @@ class JobSearchAgent:
                     preferred_job_type = next((jt for jt in job_types 
                                             if jt.lower() in ["full-time", "part-time", "contract", "freelance"]), None)
         
-        # Perform the enhanced search
-        search_results = self.perplexity_client.search_jobs(
-            keywords=enhanced_keywords,
-            location=location,
-            recency=recency,
-            experience_level=experience_level,
-            remote=remote
-        )
+        # Select the job source to use
+        job_source = self._get_job_source(source_name)
         
-        # Parse the results
-        parsed_jobs = parse_job_listings(search_results)
+        # Create filters dictionary
+        filters = {
+            "recency": recency,
+            "experience_level": experience_level or preferred_job_type,
+            "remote": remote
+        }
+        
+        # Perform the enhanced search
+        raw_results = job_source.search_jobs(enhanced_keywords, location, filters)
+        
+        # Parse and normalize the results
+        parsed_jobs = job_source.parse_results(raw_results)
+        normalized_jobs = [job_source.normalize_job(job) for job in parsed_jobs]
         
         # Return the enhanced results with original and enhanced metadata
         return {
-            "jobs": parsed_jobs,
+            "jobs": normalized_jobs,
             "metadata": {
+                "source": job_source.source_name,
                 "original_criteria": {
                     "keywords": keywords,
                     "location": location,
@@ -213,6 +236,9 @@ class JobSearchAgent:
         Returns:
             Analysis of the match including score and recommendations
         """
+        # Select the job source to use (use primary source for resume matching)
+        job_source = self.primary_source
+        
         # Prepare the query for the API
         query = (
             f"Analyze how well the following resume matches the job description. "
@@ -222,12 +248,13 @@ class JobSearchAgent:
             f"RESUME:\n{resume_text}"
         )
         
-        # Get the analysis from the API
-        analysis_result = self.perplexity_client.search(query)
+        # Use the source-specific implementation to get the analysis
+        params = {"model": "sonar-pro"}  # For Perplexity
+        raw_result = job_source.search_jobs(query, params=params)
         
         # Extract the response content
-        if "choices" in analysis_result and analysis_result["choices"]:
-            analysis_text = analysis_result["choices"][0]["message"]["content"]
+        if isinstance(raw_result, dict) and "choices" in raw_result and raw_result["choices"]:
+            analysis_text = raw_result["choices"][0]["message"]["content"]
             
             # Extract the match score using regex
             match_score = 0
@@ -318,6 +345,27 @@ class JobSearchAgent:
                 "message": f"Failed to save preferences: {str(e)}"
             }
     
+    def _get_job_source(self, source_name: Optional[str] = None) -> JobSource:
+        """
+        Get the job source to use for a search.
+        
+        Args:
+            source_name: Optional name of the specific job source to use
+            
+        Returns:
+            The selected job source
+            
+        Raises:
+            ValueError: If the specified source name is not found
+        """
+        if not source_name:
+            return self.primary_source
+        
+        if source_name.lower() in self.sources:
+            return self.sources[source_name.lower()]
+        
+        raise ValueError(f"Job source '{source_name}' not found. Available sources: {', '.join(self.sources.keys())}")
+    
     def _extract_key_terms(self, text: str) -> List[str]:
         """
         Extract key terms from a text.
@@ -346,3 +394,12 @@ class JobSearchAgent:
                 found_terms.append(term)
         
         return found_terms
+    
+    def list_sources(self) -> List[str]:
+        """
+        Get a list of available job sources.
+        
+        Returns:
+            List of job source names
+        """
+        return list(self.sources.keys())

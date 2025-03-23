@@ -24,6 +24,10 @@ def test_basic_search():
     
     agent = JobSearchAgent()
     
+    # List available sources
+    sources = agent.list_sources()
+    print(f"Available job sources: {', '.join(sources)}")
+    
     # Search for software engineering jobs
     search_results = agent.search_jobs(
         keywords="software engineer",
@@ -34,6 +38,7 @@ def test_basic_search():
     
     # Print the number of jobs found
     print(f"Found {len(search_results['jobs'])} jobs")
+    print(f"Source: {search_results['metadata']['source']}")
     
     # Print the first job as an example
     if search_results['jobs']:
@@ -42,6 +47,7 @@ def test_basic_search():
         print(f"Title: {first_job['title']}")
         print(f"Company: {first_job['company']}")
         print(f"Location: {first_job['location']}")
+        print(f"Source ID: {first_job['source_id']}")
         if first_job['salary']:
             print(f"Salary: {first_job['salary']}")
         if first_job['requirements']:
@@ -80,6 +86,7 @@ def test_enhanced_search():
     
     # Print the number of jobs found
     print(f"Found {len(search_results['jobs'])} jobs")
+    print(f"Source: {search_results['metadata']['source']}")
     
     # Print the enhanced search criteria
     print("\nEnhanced search criteria:")
