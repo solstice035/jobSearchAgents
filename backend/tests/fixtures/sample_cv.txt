@@ -1,0 +1,47 @@
+John Doe
+john.doe@example.com
+(123) 456-7890
+San Francisco, CA
+https://johndoe.com
+linkedin.com/in/johndoe
+github.com/johndoe
+
+SUMMARY
+Experienced software engineer with a focus on web development and cloud solutions.
+
+SKILLS
+• JavaScript, Python, React, Node.js
+• AWS, Docker, Kubernetes
+• Leadership, Communication, Teamwork
+
+EXPERIENCE
+Senior Software Engineer, TechCorp Inc., San Francisco, CA
+January 2020 - Present
+• Developed scalable web applications using React and Node.js
+• Led a team of 5 engineers on cloud migration projects
+• Implemented CI/CD pipelines using GitHub Actions
+
+Software Developer, StartupXYZ, Oakland, CA
+March 2017 - December 2019
+• Built and maintained RESTful APIs
+• Collaborated with UX designers to implement responsive interfaces
+
+EDUCATION
+Master of Computer Science, Stanford University
+2015 - 2017
+GPA: 3.8/4.0
+
+Bachelor of Science in Computer Engineering, UC Berkeley
+2011 - 2015
+
+CERTIFICATIONS
+AWS Certified Solutions Architect, 2021
+Issued by Amazon Web Services
+
+LANGUAGES
+English (Native), Spanish (Intermediate), French (Basic)
+
+PROJECTS
+Personal Website (2022)
+• Built with React, Next.js, and Tailwind CSS
+• Features a blog, portfolio, and contact form

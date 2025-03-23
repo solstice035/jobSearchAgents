@@ -56,3 +56,28 @@ jobSearchAgents/
 - Career roadmap generation
 - Application tracking
 - Document customization
+
+## Testing
+
+### Running Tests
+1. Navigate to the backend directory: `cd backend`
+2. Activate the virtual environment:
+   - Windows: `venv\Scripts\activate`
+   - macOS/Linux: `source venv/bin/activate`
+3. Run all tests: `python -m pytest`
+
+### Test Categories
+- Unit tests: `python -m pytest -m "not integration"`
+- Integration tests: `python -m pytest -m "integration"`
+
+### CV Parser Tests
+The Advanced CV Parser has dedicated test scripts:
+- Run CV parser tests: `./run_cv_parser_tests.sh`
+- Unit tests: `python -m pytest tests/test_advanced_cv_parser.py`
+- Integration tests: `python -m pytest tests/test_cv_parser_integration.py`
+
+### Test Coverage
+To generate test coverage reports:
+```bash
+python -m pytest --cov=services tests/
+```
