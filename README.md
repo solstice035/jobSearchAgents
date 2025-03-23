@@ -49,7 +49,10 @@ jobSearchAgents/
 ## Features
 
 - CV analysis and career coaching using OpenAI GPT-4o
-- Job search using the Perplexity API
+- Job search and matching using the Perplexity API
+  - Basic and preference-enhanced job searching
+  - Resume-job matching and analysis
+  - Multiple source job discovery
 - Career roadmap generation
 - Application tracking
 - Document customization

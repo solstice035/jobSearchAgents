@@ -14,6 +14,7 @@ load_dotenv()
 
 # Import blueprints
 from blueprints.career_coach import career_coach_bp
+from blueprints.job_search import job_search_bp
 
 # Create the application
 app = Flask(__name__)
@@ -21,6 +22,7 @@ CORS(app)
 
 # Register blueprints
 app.register_blueprint(career_coach_bp)
+app.register_blueprint(job_search_bp)
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
