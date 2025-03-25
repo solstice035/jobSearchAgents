@@ -21,9 +21,10 @@ def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
 async def message_bus() -> AsyncGenerator[MessageBus, None]:
     """Create a message bus instance for testing."""
     bus = MessageBus()
+    await bus.initialize()
     yield bus
     # Cleanup
-    bus.clear_all_queues()
+    await bus.shutdown()
 
 
 @pytest.fixture
@@ -76,7 +77,7 @@ class TestAgent(BaseAgent):
 async def test_agent(message_bus: MessageBus) -> AsyncGenerator[TestAgent, None]:
     """Create a test agent instance."""
     agent = TestAgent("test_agent_1")
-    agent.register_with_message_bus(message_bus)
+    await agent.register_with_message_bus(message_bus)
     yield agent
     # Cleanup
     await agent.stop()

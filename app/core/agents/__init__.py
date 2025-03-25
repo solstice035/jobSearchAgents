@@ -4,7 +4,6 @@ from .message_bus import (
     MessageBus,
     MessageType,
     MessagePriority,
-    MessageHandler,
 )
 from .monitoring import (
     AgentLogger,
@@ -34,7 +33,6 @@ __all__ = [
     "MessageBus",
     "MessageType",
     "MessagePriority",
-    "MessageHandler",
     # Logging
     "AgentLogger",
     "setup_logging",

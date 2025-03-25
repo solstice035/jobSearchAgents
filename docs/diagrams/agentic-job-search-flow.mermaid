@@ -1,0 +1,76 @@
+flowchart TD
+    Start([User Starts]) --> CV_Upload[Upload CV / Resume]
+    CV_Upload --> CV_Analysis[CV Analysis Agent]
+    
+    subgraph Initial_Assessment [Initial Assessment Phase]
+        CV_Analysis --> Extract_Skills[Extract Skills & Experience]
+        Extract_Skills --> Profile_Creation[Create User Profile]
+        Profile_Creation --> Initial_Feedback[Provide Initial Insights]
+    end
+    
+    Initial_Assessment --> Career_Coach_Init[Initialize Career Coach Agent]
+    
+    subgraph Career_Coaching [Career Coaching Phase]
+        Career_Coach_Init --> Goals_Exploration[Career Goals Exploration]
+        Goals_Exploration --> Skills_Gap[Skills Gap Analysis]
+        Skills_Gap --> Values_Assessment[Professional Values Assessment]
+        Values_Assessment --> Market_Alignment[Market Alignment Analysis]
+        Market_Alignment --> Career_Roadmap[Generate Career Roadmap]
+    end
+    
+    Career_Coaching --> Profile_Enhance[Enhanced User Profile]
+    Profile_Enhance --> Preference_Store[Store Career Preferences]
+    
+    Preference_Store --> Job_Search_Init[Initialize Job Search Agent]
+    
+    subgraph Autonomous_JobSearch [Autonomous Job Search Phase]
+        Job_Search_Init --> Continuous_Search[Continuous Job Discovery]
+        Continuous_Search --> Opportunity_Ranking[Opportunity Ranking & Filtering]
+        Opportunity_Ranking --> Match_Analysis[Detailed Match Analysis]
+        Match_Analysis --> Document_Customization[Resume & Cover Letter Customization]
+    end
+    
+    Autonomous_JobSearch --> User_Dashboard[Update User Dashboard]
+    
+    User_Dashboard --> UserAction{User Action}
+    UserAction -->|Apply to Job| Application_Init[Initialize Application Tracking Agent]
+    UserAction -->|Adjust Preferences| Preference_Update[Update Preferences]
+    UserAction -->|Review Matches| Review_Process[Review Matches]
+    UserAction -->|Select for Interview| Interview_Prep[Initialize Interview Prep Agent]
+    
+    Preference_Update --> Job_Search_Init
+    
+    subgraph Application_Tracking [Application Tracking Phase]
+        Application_Init --> Submit_Application[Submit Application]
+        Submit_Application --> Monitor_Status[Monitor Application Status]
+        Monitor_Status --> Follow_Up[Suggest Follow-up Actions]
+        Follow_Up --> Outcome_Analysis[Analyze Application Outcomes]
+    end
+    
+    subgraph Interview_Preparation [Interview Preparation Phase]
+        Interview_Prep --> Generate_Questions[Generate Targeted Questions]
+        Generate_Questions --> Practice_Session[Interactive Practice Session]
+        Practice_Session --> Feedback_Analysis[Provide Detailed Feedback]
+        Feedback_Analysis --> Strategy_Suggestions[Suggest Interview Strategies]
+    end
+    
+    Application_Tracking --> User_Dashboard
+    Interview_Preparation --> User_Dashboard
+    
+    subgraph Learning_System [Continuous Learning System]
+        Outcome_Analysis --> System_Learning[Update System Knowledge]
+        System_Learning --> Improve_Matching[Improve Matching Algorithms]
+        Improve_Matching --> Refine_Strategies[Refine Job Search Strategies]
+    end
+    
+    Learning_System --> Continuous_Search
+    
+    classDef agentNode fill:#b3e0ff,stroke:#0066cc,stroke-width:2px
+    classDef userNode fill:#d9f2d9,stroke:#339933,stroke-width:2px
+    classDef phaseBox fill:#f5f5f5,stroke:#cccccc,stroke-width:1px
+    classDef decisionNode fill:#ffe6cc,stroke:#ff9933,stroke-width:2px
+    
+    class CV_Analysis,Career_Coach_Init,Job_Search_Init,Application_Init,Interview_Prep agentNode
+    class CV_Upload,UserAction,User_Dashboard userNode
+    class Initial_Assessment,Career_Coaching,Autonomous_JobSearch,Application_Tracking,Interview_Preparation,Learning_System phaseBox
+    class UserAction decisionNode

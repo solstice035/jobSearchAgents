@@ -159,9 +159,9 @@ async def test_system_error_handling(message_bus, monitor_manager, configured_lo
 
     # Check metrics
     error_metrics = monitor_manager.get_agent_metrics(error_agent.agent_id)
-    processed = error_metrics.get_metric(MESSAGES_PROCESSED).get_values()
+    processed = error_metrics.get_metric(MESSAGES_PROCESSED).values
     assert len(processed) == 2  # Should have recorded 2 successful processes
 
     # Verify agent status indicates error
-    status = error_metrics.get_metric("agent_status").get_values()[-1]
+    status = error_metrics.get_metric("agent_status").values[-1]
     assert status.value == -1  # Error status

@@ -89,9 +89,11 @@ class MessageBus:
         except Exception:
             return False
 
-    async def publish(self, message: Message) -> bool:
+    async def publish(self, message: Message, topic: Optional[str] = None) -> bool:
         """Publish a message to subscribers and/or specific recipient"""
         try:
+            if topic:
+                message.topic = topic
             # Handle broadcast messages
             if message.is_broadcast():
                 await self._handle_broadcast(message)
@@ -190,3 +192,33 @@ class MessageBus:
             # Put back unexpired messages
             for msg in messages:
                 await queue.put(msg)
+
+    async def clear_all_queues(self):
+        """Clear all message queues"""
+        for queue in self._agent_queues.values():
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                    queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+
+    def get_registered_agents(self) -> Set[str]:
+        """Get set of registered agent IDs"""
+        return set(self._agent_queues.keys())
+
+    def get_topic_subscribers(self, topic: str) -> Set[MessageHandler]:
+        """Get set of handlers subscribed to a topic"""
+        return self._subscribers.get(topic, set())
+
+    async def send_direct(self, message: Message, recipient_id: str) -> bool:
+        """Send a direct message to a specific agent"""
+        if not message.recipient_id:
+            message.recipient_id = recipient_id
+        return await self.publish(message)
+
+    async def get_next_message(
+        self, agent_id: str, timeout: Optional[float] = None
+    ) -> Optional[Message]:
+        """Alias for get_message for backward compatibility"""
+        return await self.get_message(agent_id, timeout)

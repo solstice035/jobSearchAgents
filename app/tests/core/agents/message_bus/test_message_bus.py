@@ -21,23 +21,25 @@ async def test_topic_subscription(message_bus, test_agent):
     topic = "test_topic"
 
     # Test subscription
-    test_agent.subscribe_to_topic(topic)
+    await test_agent.subscribe_to_topic(topic)
     assert topic in test_agent.subscribed_topics
-    assert test_agent.agent_id in message_bus.get_topic_subscribers(topic)
+    assert test_agent.handle_message in message_bus.get_topic_subscribers(topic)
 
     # Test unsubscription
-    test_agent.unsubscribe_from_topic(topic)
+    await test_agent.unsubscribe_from_topic(topic)
     assert topic not in test_agent.subscribed_topics
-    assert test_agent.agent_id not in message_bus.get_topic_subscribers(topic)
+    assert test_agent.handle_message not in message_bus.get_topic_subscribers(topic)
 
 
 @pytest.mark.asyncio
 async def test_direct_messaging(message_bus, test_agent):
     """Test direct messaging between agents."""
-    message = Message(
-        id="test_msg_1",
-        type=MessageType.COMMAND,
-        content={"action": "test"},
+    message = Message.create(
+        message_type=MessageType.COMMAND,
+        sender_id="test_sender",
+        topic="direct",
+        payload={"action": "test"},
+        recipient_id=test_agent.agent_id,
         priority=MessagePriority.NORMAL,
     )
 
@@ -47,7 +49,7 @@ async def test_direct_messaging(message_bus, test_agent):
     # Get and process message
     received = await message_bus.get_next_message(test_agent.agent_id)
     assert received is not None
-    assert received.id == message.id
+    assert str(received.message_id) == str(message.message_id)
 
     await test_agent.handle_message(received)
     assert test_agent.command_count == 1
@@ -58,22 +60,23 @@ async def test_direct_messaging(message_bus, test_agent):
 async def test_topic_publishing(message_bus, test_agent):
     """Test publishing messages to topics."""
     topic = "test_topic"
-    test_agent.subscribe_to_topic(topic)
+    await test_agent.subscribe_to_topic(topic)
 
-    message = Message(
-        id="test_msg_2",
-        type=MessageType.EVENT,
-        content={"event": "test"},
+    message = Message.create(
+        message_type=MessageType.EVENT,
+        sender_id="test_sender",
+        topic=topic,
+        payload={"event": "test"},
         priority=MessagePriority.LOW,
     )
 
     # Publish to topic
-    await message_bus.publish(message, topic)
+    await message_bus.publish(message)
 
     # Get and process message
     received = await message_bus.get_next_message(test_agent.agent_id)
     assert received is not None
-    assert received.id == message.id
+    assert str(received.message_id) == str(message.message_id)
 
     await test_agent.handle_message(received)
     assert test_agent.event_count == 1
@@ -83,17 +86,21 @@ async def test_topic_publishing(message_bus, test_agent):
 async def test_message_priority(message_bus, test_agent):
     """Test message priority handling."""
     # Send messages with different priorities
-    low_priority = Message(
-        id="low",
-        type=MessageType.COMMAND,
-        content={"priority": "low"},
+    low_priority = Message.create(
+        message_type=MessageType.COMMAND,
+        sender_id="test_sender",
+        topic="direct",
+        payload={"priority": "low"},
+        recipient_id=test_agent.agent_id,
         priority=MessagePriority.LOW,
     )
 
-    high_priority = Message(
-        id="high",
-        type=MessageType.COMMAND,
-        content={"priority": "high"},
+    high_priority = Message.create(
+        message_type=MessageType.COMMAND,
+        sender_id="test_sender",
+        topic="direct",
+        payload={"priority": "high"},
+        recipient_id=test_agent.agent_id,
         priority=MessagePriority.HIGH,
     )
 
@@ -103,31 +110,35 @@ async def test_message_priority(message_bus, test_agent):
 
     # High priority should be received first
     first_msg = await message_bus.get_next_message(test_agent.agent_id)
-    assert first_msg.id == "high"
+    assert str(first_msg.message_id) == str(high_priority.message_id)
 
     second_msg = await message_bus.get_next_message(test_agent.agent_id)
-    assert second_msg.id == "low"
+    assert str(second_msg.message_id) == str(low_priority.message_id)
 
 
 @pytest.mark.asyncio
 async def test_message_expiration(message_bus, test_agent):
     """Test message expiration handling."""
     # Create expired message
-    expired_message = Message(
-        id="expired",
-        type=MessageType.COMMAND,
-        content={"test": "expired"},
+    expired_message = Message.create(
+        message_type=MessageType.COMMAND,
+        sender_id="test_sender",
+        topic="direct",
+        payload={"test": "expired"},
+        recipient_id=test_agent.agent_id,
         priority=MessagePriority.NORMAL,
-        expiration=datetime.now() - timedelta(seconds=1),
+        expires_at=datetime.now() - timedelta(seconds=1),
     )
 
     # Create valid message
-    valid_message = Message(
-        id="valid",
-        type=MessageType.COMMAND,
-        content={"test": "valid"},
+    valid_message = Message.create(
+        message_type=MessageType.COMMAND,
+        sender_id="test_sender",
+        topic="direct",
+        payload={"test": "valid"},
+        recipient_id=test_agent.agent_id,
         priority=MessagePriority.NORMAL,
-        expiration=datetime.now() + timedelta(minutes=5),
+        expires_at=datetime.now() + timedelta(minutes=5),
     )
 
     # Send both messages
@@ -137,7 +148,7 @@ async def test_message_expiration(message_bus, test_agent):
     # Only valid message should be received
     msg = await message_bus.get_next_message(test_agent.agent_id)
     assert msg is not None
-    assert msg.id == "valid"
+    assert str(msg.message_id) == str(valid_message.message_id)
 
     # No more messages should be available
     msg = await message_bus.get_next_message(test_agent.agent_id)
