@@ -46,9 +46,9 @@ async def test_direct_messaging(message_bus, test_agent):
     # Send direct message
     await message_bus.send_direct(message, test_agent.agent_id)
 
-    # Get and process message
-    received = await message_bus.get_next_message(test_agent.agent_id)
-    assert received is not None
+    # Get and process message with a timeout
+    received = await message_bus.get_next_message(test_agent.agent_id, timeout=1.0)
+    assert received is not None, "Message not received within timeout"
     assert str(received.message_id) == str(message.message_id)
 
     await test_agent.handle_message(received)
@@ -73,9 +73,9 @@ async def test_topic_publishing(message_bus, test_agent):
     # Publish to topic
     await message_bus.publish(message)
 
-    # Get and process message
-    received = await message_bus.get_next_message(test_agent.agent_id)
-    assert received is not None
+    # Get and process message with a timeout
+    received = await message_bus.get_next_message(test_agent.agent_id, timeout=1.0)
+    assert received is not None, "Message not received within timeout"
     assert str(received.message_id) == str(message.message_id)
 
     await test_agent.handle_message(received)
@@ -109,10 +109,12 @@ async def test_message_priority(message_bus, test_agent):
     await message_bus.send_direct(high_priority, test_agent.agent_id)
 
     # High priority should be received first
-    first_msg = await message_bus.get_next_message(test_agent.agent_id)
+    first_msg = await message_bus.get_next_message(test_agent.agent_id, timeout=1.0)
+    assert first_msg is not None, "First message not received within timeout"
     assert str(first_msg.message_id) == str(high_priority.message_id)
 
-    second_msg = await message_bus.get_next_message(test_agent.agent_id)
+    second_msg = await message_bus.get_next_message(test_agent.agent_id, timeout=1.0)
+    assert second_msg is not None, "Second message not received within timeout"
     assert str(second_msg.message_id) == str(low_priority.message_id)
 
 
@@ -146,10 +148,10 @@ async def test_message_expiration(message_bus, test_agent):
     await message_bus.send_direct(valid_message, test_agent.agent_id)
 
     # Only valid message should be received
-    msg = await message_bus.get_next_message(test_agent.agent_id)
-    assert msg is not None
+    msg = await message_bus.get_next_message(test_agent.agent_id, timeout=1.0)
+    assert msg is not None, "Valid message not received within timeout"
     assert str(msg.message_id) == str(valid_message.message_id)
 
     # No more messages should be available
-    msg = await message_bus.get_next_message(test_agent.agent_id)
-    assert msg is None
+    msg = await message_bus.get_next_message(test_agent.agent_id, timeout=0.1)
+    assert msg is None, "Unexpected message received"

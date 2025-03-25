@@ -131,9 +131,32 @@ class MessageBus:
 
             queue = self._agent_queues[agent_id]
             try:
-                message = await asyncio.wait_for(queue.get(), timeout=timeout)
-                queue.task_done()
-                return message
+                # Keep trying until we get a valid message or timeout
+                start_time = asyncio.get_event_loop().time()
+                remaining_time = timeout
+
+                while True:
+                    try:
+                        message = await asyncio.wait_for(
+                            queue.get(), timeout=remaining_time
+                        )
+                        queue.task_done()
+
+                        # Skip expired messages
+                        if message.is_expired():
+                            if timeout is not None:
+                                # Update remaining time
+                                elapsed = asyncio.get_event_loop().time() - start_time
+                                remaining_time = timeout - elapsed
+                                if remaining_time <= 0:
+                                    return None
+                            continue
+
+                        return message
+
+                    except asyncio.TimeoutError:
+                        return None
+
             except asyncio.TimeoutError:
                 return None
         except Exception:
@@ -143,22 +166,51 @@ class MessageBus:
         """Handle broadcast message delivery"""
         handlers = self._subscribers.get(message.topic, set())
 
-        # Create tasks for all handlers
-        tasks = [asyncio.create_task(handler(message)) for handler in handlers]
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        # Add message to queues of subscribed agents
+        for handler in handlers:
+            agent = getattr(handler, "__self__", None)
+            if agent and hasattr(agent, "agent_id"):
+                agent_id = agent.agent_id
+                if agent_id in self._agent_queues:
+                    queue = self._agent_queues[agent_id]
+                    try:
+                        await queue.put(message)
+                    except asyncio.QueueFull:
+                        await self._make_space_in_queue(queue)
+                        await queue.put(message)
 
     async def _handle_directed_message(self, message: Message):
         """Handle directed message delivery"""
         if message.recipient_id in self._agent_queues:
             queue = self._agent_queues[message.recipient_id]
             try:
-                await queue.put(message)
+                # Get all messages from queue
+                messages = []
+                while not queue.empty():
+                    msg = queue.get_nowait()
+                    messages.append(msg)
+                    queue.task_done()
+
+                # Add new message
+                messages.append(message)
+
+                # Sort by priority and timestamp
+                messages.sort(
+                    key=lambda m: (m.priority.value, m.timestamp), reverse=True
+                )
+
+                # Put messages back in queue
+                for msg in messages:
+                    if (
+                        len(messages) > self._max_queue_size
+                        and msg.priority.value <= MessagePriority.LOW.value
+                    ):
+                        continue  # Drop low priority messages if queue would be too full
+                    await queue.put(msg)
+
             except asyncio.QueueFull:
-                # If queue is full, remove oldest low priority message
-                await self._make_space_in_queue(queue)
-                await queue.put(message)
+                # This shouldn't happen now since we manage the queue size manually
+                pass
 
     async def _make_space_in_queue(self, queue: asyncio.Queue[Message]):
         """Remove oldest low priority message to make space"""
