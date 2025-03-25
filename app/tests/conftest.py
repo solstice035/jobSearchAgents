@@ -53,8 +53,8 @@ def monitor_manager():
 class TestAgent(BaseAgent):
     """A simple agent implementation for testing."""
 
-    def __init__(self, agent_id: str):
-        super().__init__(agent_id, "test_agent")
+    def __init__(self, agent_id: str, agent_type: str = "test_agent"):
+        super().__init__(agent_id, agent_type)
         self.received_messages = []
         self.command_count = 0
         self.query_count = 0
