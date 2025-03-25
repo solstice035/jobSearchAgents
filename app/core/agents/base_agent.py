@@ -81,6 +81,11 @@ class BaseAgent(AgentProtocol):
             )
         self.metrics.record_value(AGENT_STATUS, 0)  # 0 = initialized
 
+    @property
+    def is_running(self) -> bool:
+        """Return True if the agent is currently running."""
+        return self._running
+
     async def initialize(self) -> bool:
         """Initialize the agent and start required tasks"""
         try:

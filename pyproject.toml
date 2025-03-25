@@ -1,0 +1,16 @@
+[project]
+name = "jobSearchAgents"
+version = "0.1.0"
+description = "Job Search Agents System"
+requires-python = ">=3.8"
+
+[tool.setuptools]
+packages = ["app", "backend", "frontend"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]
+python_files = ["test_*.py", "*_test.py"] 

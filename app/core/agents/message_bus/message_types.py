@@ -54,6 +54,7 @@ class Message:
         expires_at: Optional[datetime] = None,
     ) -> "Message":
         """Factory method to create a new message"""
+        now = datetime.now()
         return cls(
             message_id=uuid4(),
             message_type=message_type,
@@ -62,16 +63,18 @@ class Message:
             topic=topic,
             payload=payload,
             priority=priority,
-            timestamp=datetime.now(),
+            timestamp=now,
             correlation_id=correlation_id,
             expires_at=expires_at,
         )
 
-    def is_expired(self) -> bool:
+    def is_expired(self, current_time: Optional[datetime] = None) -> bool:
         """Check if message has expired"""
         if self.expires_at is None:
             return False
-        return datetime.now() > self.expires_at
+        if current_time is None:
+            current_time = datetime.now()
+        return current_time > self.expires_at
 
     def is_broadcast(self) -> bool:
         """Check if message is a broadcast message"""

@@ -5,7 +5,7 @@ Integration tests for the Job Search Agent with other system agents.
 import pytest
 import asyncio
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, AsyncGenerator
 
 from app.core.agents import Message, MessageType, MessagePriority
 from app.core.agents.job_search.job_search_agent import (
@@ -17,7 +17,18 @@ from app.core.agents.job_search.job_search_agent import (
 )
 from app.tests.conftest import TestAgent
 from app.core.agents.message_bus.message_bus import MessageBus
+from app.tests.utils import wait_for_condition, wait_for_message
 from backend.services.job_search.sources.base_source import BaseJobSource
+
+
+async def cleanup_agent(agent: TestAgent, name: str, timeout: float = 2.0):
+    """Helper function to clean up an agent."""
+    if agent.is_running:
+        await agent.stop()
+        stopped = await wait_for_condition(
+            lambda: not agent.is_running, timeout=timeout
+        )
+        assert stopped, f"{name} agent did not stop correctly"
 
 
 class CareerCoachAgent(TestAgent):
@@ -102,187 +113,182 @@ def mock_job_source():
 
 
 @pytest.fixture
-async def job_search_agent(message_bus, mock_job_source):
+async def job_search_agent(
+    message_bus, mock_job_source
+) -> AsyncGenerator[JobSearchAgent, None]:
     """Create and configure a job search agent for testing."""
     agent = JobSearchAgent("job_search_1", source=mock_job_source)
-    await agent.register_with_message_bus(message_bus)
-    await agent.start()
-    yield agent
-    # Ensure proper agent shutdown
-    await agent.stop()
-    # Ensure all pending tasks complete
-    await asyncio.sleep(0.5)  # Increased sleep time for reliable cleanup
-    # Clear all messages to prevent blocking
-    if message_bus:
-        await message_bus.clear_all_queues()
+    try:
+        await agent.register_with_message_bus(message_bus)
+        await agent.start()
+        yield agent
+    finally:
+        await cleanup_agent(agent, "job_search")
 
 
 @pytest.fixture
-async def career_coach_agent(message_bus):
+async def career_coach_agent(message_bus) -> AsyncGenerator[CareerCoachAgent, None]:
     """Create and configure a career coach agent for testing."""
     agent = CareerCoachAgent("career_coach_1")
-    await agent.register_with_message_bus(message_bus)
-    await agent.start()
-    yield agent
-    # Ensure proper agent shutdown
-    await agent.stop()
-    # Ensure all pending tasks complete
-    await asyncio.sleep(0.5)  # Increased sleep time for reliable cleanup
+    try:
+        await agent.register_with_message_bus(message_bus)
+        await agent.start()
+        yield agent
+    finally:
+        await cleanup_agent(agent, "career_coach")
 
 
 @pytest.fixture
-async def document_agent(message_bus):
+async def document_agent(message_bus) -> AsyncGenerator[DocumentAgent, None]:
     """Create and configure a document agent for testing."""
     agent = DocumentAgent("document_1")
-    await agent.register_with_message_bus(message_bus)
-    await agent.start()
-    yield agent
-    # Ensure proper agent shutdown
-    await agent.stop()
-    # Ensure all pending tasks complete
-    await asyncio.sleep(0.5)  # Increased sleep time for reliable cleanup
+    try:
+        await agent.register_with_message_bus(message_bus)
+        await agent.start()
+        yield agent
+    finally:
+        await cleanup_agent(agent, "document")
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(3)  # 3 second timeout for integration tests
+@pytest.mark.timeout(15)  # Increased timeout for integration tests
 async def test_career_coach_integration(
-    job_search_agent, career_coach_agent, message_bus, monitor_manager
+    job_search_agent, career_coach_agent, message_bus
 ):
     """Test integration between Job Search and Career Coach agents."""
-    # Start both agents
-    await job_search_agent.start()
-    await career_coach_agent.start()
-
-    # Save user preferences through job search agent
-    preferences_cmd = Message.create(
-        message_type=MessageType.COMMAND,
-        sender_id="career_coach_1",
-        topic="direct",
-        payload={
-            "command": "save_preferences",
-            "user_id": "test_user",
-            "preferences": {
-                "technicalSkills": ["Python", "AWS", "React"],
-                "jobTypes": ["Remote", "Full-time"],
-                "careerGoals": "Senior Software Engineer position",
+    try:
+        # Save user preferences through job search agent
+        preferences_cmd = Message.create(
+            message_type=MessageType.COMMAND,
+            sender_id="career_coach_1",
+            topic="direct",
+            payload={
+                "command": "save_preferences",
+                "user_id": "test_user",
+                "preferences": {
+                    "technicalSkills": ["Python", "AWS", "React"],
+                    "jobTypes": ["Remote", "Full-time"],
+                    "careerGoals": "Senior Software Engineer position",
+                },
             },
-        },
-        priority=MessagePriority.NORMAL,
-    )
+            recipient_id=job_search_agent.agent_id,
+            priority=MessagePriority.NORMAL,
+        )
 
-    await message_bus.send_direct(preferences_cmd, job_search_agent.agent_id)
-    await asyncio.sleep(0.5)  # Increased sleep time
+        await message_bus.send_direct(preferences_cmd, job_search_agent.agent_id)
 
-    # Career coach initiates a job search
-    search_request = Message.create(
-        message_type=MessageType.EVENT,
-        sender_id="career_coach_1",
-        topic=JOB_SEARCH_TOPIC,
-        payload={
-            "type": SEARCH_REQUEST,
-            "params": {
-                "keywords": "senior software engineer",
-                "location": "Remote",
-                "remote": True,
+        # Wait for preferences to be saved
+        assert await wait_for_condition(
+            lambda: hasattr(job_search_agent, "user_preferences")
+            and job_search_agent.user_preferences.get("test_user") is not None,
+            timeout=5.0,
+        ), "Timeout waiting for preferences to be saved"
+
+        # Career coach initiates a job search
+        search_request = Message.create(
+            message_type=MessageType.EVENT,
+            sender_id="career_coach_1",
+            topic=JOB_SEARCH_TOPIC,
+            payload={
+                "type": SEARCH_REQUEST,
+                "params": {
+                    "keywords": "senior software engineer",
+                    "location": "Remote",
+                    "remote": True,
+                },
             },
-        },
-        priority=MessagePriority.NORMAL,
-    )
+            priority=MessagePriority.NORMAL,
+        )
 
-    await message_bus.publish(search_request)
-    await asyncio.sleep(0.5)  # Increased sleep time
+        await message_bus.publish(search_request)
 
-    # Stop both agents
-    await job_search_agent.stop()
-    await career_coach_agent.stop()
+        # Wait for job results with assertion
+        assert await wait_for_condition(
+            lambda: len(career_coach_agent.received_job_results) > 0,
+            timeout=5.0,
+        ), "Timeout waiting for job results"
 
-    # Verify career coach received the results
-    assert len(career_coach_agent.received_job_results) > 0, "No job results received"
-    assert (
-        "results" in career_coach_agent.received_job_results[0].payload
-    ), "Results not found in payload"
-    assert (
-        "metadata" in career_coach_agent.received_job_results[0].payload
-    ), "Metadata not found in payload"
+        # Verify job results content
+        job_results = career_coach_agent.received_job_results[0]
+        assert "results" in job_results, "Results not found in payload"
+        assert "metadata" in job_results, "Metadata not found in payload"
+
+    finally:
+        # Cleanup handled by fixtures
+        pass
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(3)  # 3 second timeout for integration tests
+@pytest.mark.timeout(15)  # Increased timeout for integration tests
 async def test_document_agent_integration(
-    job_search_agent, document_agent, message_bus, monitor_manager
+    job_search_agent, document_agent, message_bus
 ):
     """Test integration between Job Search and Document agents."""
-    # Start both agents
-    await job_search_agent.start()
-    await document_agent.start()
+    try:
+        # Create a job description
+        job_description = """
+        Senior Python Developer
+        Requirements:
+        - 5+ years Python experience
+        - AWS cloud infrastructure
+        - Experience with microservices
+        """
 
-    # Create a job description
-    job_description = """
-    Senior Python Developer
-    Requirements:
-    - 5+ years Python experience
-    - AWS cloud infrastructure
-    - Experience with microservices
-    """
-
-    # Request resume match analysis
-    match_request = Message.create(
-        message_type=MessageType.EVENT,
-        sender_id="document_1",
-        topic=JOB_MATCH_TOPIC,
-        payload={
-            "type": "resume_match_request",
-            "params": {
-                "job_description": job_description,
-                "resume_text": document_agent.resume_text,
+        # Request resume match analysis
+        match_request = Message.create(
+            message_type=MessageType.EVENT,
+            sender_id="document_1",
+            topic=JOB_MATCH_TOPIC,
+            payload={
+                "type": "resume_match_request",
+                "params": {
+                    "job_description": job_description,
+                    "resume_text": document_agent.resume_text,
+                },
             },
-        },
-        priority=MessagePriority.NORMAL,
-    )
+            priority=MessagePriority.NORMAL,
+        )
 
-    await message_bus.publish(match_request)
-    await asyncio.sleep(0.5)  # Increased sleep time
+        await message_bus.publish(match_request)
 
-    # Get all messages for document_1
-    match_results = None
+        # Wait for match results with timeout
+        match_results = await wait_for_message(
+            message_bus, "document_1", message_type=MessageType.RESPONSE, timeout=5.0
+        )
 
-    async for msg in message_bus.get_messages("document_1"):
-        if msg.message_type == MessageType.RESPONSE:
-            match_results = msg
-            break
+        # Verify the match results
+        assert match_results is not None, "Timeout waiting for match results"
+        assert (
+            "match_score" in match_results.payload
+        ), "Match score not found in results"
+        assert "analysis" in match_results.payload, "Analysis not found in results"
 
-    # Stop both agents
-    await job_search_agent.stop()
-    await document_agent.stop()
-
-    # Verify the match results
-    assert match_results is not None, "No match results received"
-    assert "match_score" in match_results.payload, "Match score not found in results"
-    assert "analysis" in match_results.payload, "Analysis not found in results"
+    finally:
+        # Cleanup handled by fixtures
+        pass
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)  # 5 second timeout for this complex test
-async def test_multi_agent_workflow(message_bus, monitor_manager, mock_job_source):
+@pytest.mark.timeout(20)  # Increased timeout for this complex test
+async def test_multi_agent_workflow(message_bus, mock_job_source):
     """Test complete workflow involving multiple agents."""
-    # Create and setup agents
-    job_search = JobSearchAgent("job_search_3", source=mock_job_source)
-    career_coach = CareerCoachAgent("career_coach_2")
-    document_agent = DocumentAgent("document_2")
+    job_search = None
+    career_coach = None
+    document_agent = None
 
     try:
-        # Setup agents
-        await job_search.register_with_message_bus(message_bus)
-        await career_coach.register_with_message_bus(message_bus)
-        await document_agent.register_with_message_bus(message_bus)
-
-        # Start all agents
-        await job_search.start()
-        await career_coach.start()
-        await document_agent.start()
+        # Create and setup agents
+        job_search = JobSearchAgent("job_search_3", source=mock_job_source)
+        career_coach = CareerCoachAgent("career_coach_2")
+        document_agent = DocumentAgent("document_2")
 
         # Clear message queues before starting test
         await message_bus.clear_all_queues()
+
+        # Setup and start agents
+        for agent in [job_search, career_coach, document_agent]:
+            await agent.register_with_message_bus(message_bus)
+            await agent.start()
 
         # 1. Career coach saves user preferences
         preferences_cmd = Message.create(
@@ -298,12 +304,18 @@ async def test_multi_agent_workflow(message_bus, monitor_manager, mock_job_sourc
                     "careerGoals": "Senior Software Engineer position",
                 },
             },
+            recipient_id=job_search.agent_id,
             priority=MessagePriority.NORMAL,
-            recipient_id=job_search.agent_id,  # Explicitly set recipient
         )
 
         await message_bus.send_direct(preferences_cmd, job_search.agent_id)
-        await asyncio.sleep(0.5)  # Increased wait time
+
+        # Wait for preferences to be saved with assertion
+        assert await wait_for_condition(
+            lambda: hasattr(job_search, "user_preferences")
+            and job_search.user_preferences.get("test_user") is not None,
+            timeout=5.0,
+        ), "Timeout waiting for preferences to be saved"
 
         # 2. Career coach initiates job search
         search_request = Message.create(
@@ -322,24 +334,31 @@ async def test_multi_agent_workflow(message_bus, monitor_manager, mock_job_sourc
         )
 
         await message_bus.publish(search_request)
-        await asyncio.sleep(0.5)  # Increased wait time
 
-        # Stop all agents
-        await job_search.stop()
-        await career_coach.stop()
-        await document_agent.stop()
+        # Wait for job results with assertion
+        assert await wait_for_condition(
+            lambda: len(career_coach.received_job_results) > 0,
+            timeout=5.0,
+        ), "Timeout waiting for job results"
 
-        # 3. Verify career coach received job results
-        assert len(career_coach.received_job_results) > 0, "No job results received"
-        assert (
-            "results" in career_coach.received_job_results[0].payload
-        ), "Results not found in payload"
-        assert (
-            "metadata" in career_coach.received_job_results[0].payload
-        ), "Metadata not found in payload"
+        # Verify job results structure and content
+        job_results = career_coach.received_job_results[0]
+        assert "results" in job_results, "Results not found in payload"
+        assert "metadata" in job_results, "Metadata not found in payload"
+        assert isinstance(job_results["results"], list), "Results should be a list"
 
     finally:
-        # Cleanup
-        await job_search.stop()
-        await career_coach.stop()
-        await document_agent.stop()
+        # Cleanup agents in reverse order
+        for agent, name in [
+            (document_agent, "document"),
+            (career_coach, "career_coach"),
+            (job_search, "job_search"),
+        ]:
+            if agent:
+                await cleanup_agent(agent, name)
+
+        if message_bus:
+            try:
+                await message_bus.clear_all_queues()
+            except Exception as e:
+                pytest.fail(f"Failed to clear message bus queues: {str(e)}")

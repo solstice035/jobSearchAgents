@@ -106,23 +106,52 @@ class MessageBus:
         except Exception:
             return False
 
-    async def publish(self, message: Message, topic: Optional[str] = None) -> bool:
+    async def publish(
+        self,
+        message: Message,
+        topic: Optional[str] = None,
+        check_time: Optional[datetime] = None,
+    ) -> bool:
         """Publish a message to subscribers and/or specific recipient"""
         try:
             if topic:
                 message.topic = topic
+
             # Handle broadcast messages
             if message.is_broadcast():
+                # Clear any existing messages for this topic from unsubscribed agents
+                for agent_id, queue in self._agent_queues.items():
+                    # Check if agent is still subscribed to this topic
+                    is_subscribed = any(
+                        getattr(handler, "__self__", None)
+                        and getattr(handler.__self__, "agent_id", None) == agent_id
+                        for handler in self._subscribers.get(message.topic, set())
+                    )
+                    if not is_subscribed:
+                        # Remove any messages for this topic from the queue
+                        messages = []
+                        while not queue.empty():
+                            msg = queue.get_nowait()
+                            queue.task_done()
+                            if msg.topic != message.topic:
+                                messages.append(msg)
+                        # Put back non-topic messages
+                        for msg in messages:
+                            await queue.put(msg)
+
                 await self._handle_broadcast(message)
             # Handle directed messages
             elif message.recipient_id:
-                await self._handle_directed_message(message)
+                await self._handle_directed_message(message, check_time)
             return True
         except Exception:
             return False
 
     async def get_message(
-        self, agent_id: str, timeout: Optional[float] = None
+        self,
+        agent_id: str,
+        timeout: Optional[float] = None,
+        check_time: Optional[datetime] = None,
     ) -> Optional[Message]:
         """Get next message for an agent"""
         try:
@@ -137,11 +166,14 @@ class MessageBus:
                     try:
                         message = await asyncio.wait_for(queue.get(), timeout=timeout)
                         queue.task_done()
-                        
+
                         # Skip expired messages but don't loop - just return None
-                        if message.is_expired():
+                        if message.is_expired(check_time):
+                            # Put the message back in the queue if it's not expired
+                            if not message.is_expired(check_time):
+                                await queue.put(message)
                             return None
-                            
+
                         return message
                     except asyncio.TimeoutError:
                         return None
@@ -150,17 +182,20 @@ class MessageBus:
                     try:
                         message = queue.get_nowait()
                         queue.task_done()
-                        
-                        if message.is_expired():
+
+                        if message.is_expired(check_time):
+                            # Put the message back in the queue if it's not expired
+                            if not message.is_expired(check_time):
+                                await queue.put(message)
                             return None
-                            
+
                         return message
                     except asyncio.QueueEmpty:
                         return None
-                        
+
             except asyncio.TimeoutError:
                 return None
-                
+
         except Exception as e:
             # Log error but don't propagate - return None instead
             print(f"Error in get_message: {str(e)}")
@@ -178,43 +213,77 @@ class MessageBus:
                 if agent_id in self._agent_queues:
                     queue = self._agent_queues[agent_id]
                     try:
-                        await queue.put(message)
+                        # Only deliver if agent is still subscribed
+                        if handler in self._subscribers.get(message.topic, set()):
+                            await queue.put(message)
                     except asyncio.QueueFull:
+                        # Try to make space and retry
                         await self._make_space_in_queue(queue)
-                        await queue.put(message)
+                        if handler in self._subscribers.get(message.topic, set()):
+                            await queue.put(message)
 
-    async def _handle_directed_message(self, message: Message):
+    async def _handle_directed_message(
+        self, message: Message, check_time: Optional[datetime] = None
+    ):
         """Handle directed message delivery"""
         if message.recipient_id in self._agent_queues:
             queue = self._agent_queues[message.recipient_id]
             try:
                 # Get all messages from queue
                 messages = []
+                now = datetime.now() if check_time is None else check_time
+                print(f"\nHandling message with payload: {message.payload}")
+                print(f"Current time: {now}")
+                print(f"Message expires at: {message.expires_at}")
+                print(f"Message expired? {message.is_expired(now)}")
+
+                # First check if the new message is expired
+                if not message.is_expired(now):
+                    messages.append(message)
+                    print("Added new message to queue")
+                else:
+                    print("New message is expired, skipping")
+
+                # Then get existing messages from queue
                 while not queue.empty():
                     msg = queue.get_nowait()
-                    messages.append(msg)
+                    print(f"Found existing message: {msg.payload}")
+                    print(f"Expires at: {msg.expires_at}")
+                    print(f"Expired? {msg.is_expired(now)}")
+                    if not msg.is_expired(now):  # Only keep unexpired messages
+                        messages.append(msg)
+                        print("Added existing message to queue")
+                    else:
+                        print("Existing message is expired, skipping")
                     queue.task_done()
 
-                # Add new message
-                messages.append(message)
+                # Sort by priority (highest first) and timestamp (oldest first)
+                messages.sort(key=lambda m: (-m.priority.value, m.timestamp))
+                print(f"Total messages to put back in queue: {len(messages)}")
 
-                # Sort by priority and timestamp
-                messages.sort(
-                    key=lambda m: (m.priority.value, m.timestamp), reverse=True
-                )
-
-                # Put messages back in queue
+                # Put messages back in queue in sorted order
                 for msg in messages:
-                    if (
-                        len(messages) > self._max_queue_size
-                        and msg.priority.value <= MessagePriority.LOW.value
-                    ):
-                        continue  # Drop low priority messages if queue would be too full
+                    await queue.put(msg)
+                    print(f"Put message back in queue: {msg.payload}")
+
+                # Print final queue state
+                print("\nFinal queue state:")
+                temp_messages = []
+                while not queue.empty():
+                    msg = queue.get_nowait()
+                    temp_messages.append(msg)
+                    print(f"Message in queue: {msg.payload}")
+                    print(f"Expires at: {msg.expires_at}")
+                    print(f"Expired? {msg.is_expired(now)}")
+                    queue.task_done()
+
+                # Put messages back
+                for msg in temp_messages:
                     await queue.put(msg)
 
             except asyncio.QueueFull:
                 # This shouldn't happen now since we manage the queue size manually
-                pass
+                print("Queue full, dropping message")
 
     async def _make_space_in_queue(self, queue: asyncio.Queue[Message]):
         """Remove oldest low priority message to make space"""
@@ -284,33 +353,67 @@ class MessageBus:
         """Get set of handlers subscribed to a topic"""
         return self._subscribers.get(topic, set())
 
-    async def send_direct(self, message: Message, recipient_id: str) -> bool:
+    async def send_direct(
+        self, message: Message, recipient_id: str, check_time: Optional[datetime] = None
+    ) -> bool:
         """Send a direct message to a specific agent"""
         if not message.recipient_id:
             message.recipient_id = recipient_id
-        return await self.publish(message)
+        return await self.publish(message, check_time=check_time)
 
     async def get_next_message(
         self, agent_id: str, timeout: Optional[float] = None
     ) -> Optional[Message]:
         """Alias for get_message for backward compatibility"""
         return await self.get_message(agent_id, timeout)
-        
-    async def get_messages(self, agent_id: str, max_messages: int = 100):
-        """Generator to get all messages for an agent with a safety limit."""
+
+    async def get_messages(
+        self, agent_id: str, check_time: Optional[datetime] = None
+    ) -> List[Message]:
+        """Get all messages for an agent.
+
+        Args:
+            agent_id: The agent ID to get messages for
+            check_time: Optional timestamp to use for expiration checks
+
+        Returns:
+            List of messages for the agent
+        """
+        now = check_time if check_time is not None else datetime.now()
+        print(f"\nget_messages called with check_time: {now}")
         if agent_id not in self._agent_queues:
-            return
+            print(f"Agent {agent_id} not found in queues")
+            return []
 
         queue = self._agent_queues[agent_id]
-        count = 0
-        
-        # Add a safety limit to prevent infinite loops
-        while not queue.empty() and count < max_messages:
+        messages = []
+        temp_queue = []
+
+        # Get all messages from the queue
+        while not queue.empty():
             try:
                 message = queue.get_nowait()
                 queue.task_done()
-                yield message
-                count += 1
+
+                # Skip expired messages
+                if message.is_expired(now):
+                    print(f"Skipping expired message: {message.payload}")
+                    continue
+
+                # Keep all messages, including those with None payload
+                messages.append(message)
+                temp_queue.append(message)
+                print(f"Added message with payload: {message.payload}")
             except asyncio.QueueEmpty:
-                # Just in case another thread/task took the message
                 break
+
+        # Sort messages by priority (highest first) and timestamp (oldest first)
+        messages.sort(key=lambda m: (-m.priority.value, m.timestamp))
+        print(f"Found {len(messages)} valid messages")
+
+        # Put all messages back in the queue in their original order
+        for message in temp_queue:
+            await queue.put(message)
+            print(f"Put back message: {message.payload}")
+
+        return messages

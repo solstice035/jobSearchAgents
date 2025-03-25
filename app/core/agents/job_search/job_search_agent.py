@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime
 from typing import Dict, Any, Optional
 
-from app.core.agents import BaseAgent, Message, MessageType, MessagePriority
+from app.core.agents import BaseAgent, Message, MessageType, MessagePriority, MessageBus
 from app.core.agents.monitoring import MESSAGES_PROCESSED, PROCESSING_TIME
 from backend.services.job_search.job_search_service import JobSearchService
 from backend.services.job_search.sources.base_source import BaseJobSource
@@ -35,21 +35,45 @@ class JobSearchAgent(BaseAgent):
 
     def __init__(
         self,
-        message_bus: MessageBus,
-        config_file: Optional[str] = None,
+        agent_id: str,
         source: Optional[BaseJobSource] = None,
+        config_file: Optional[str] = None,
     ):
         """
         Initialize the Job Search Agent.
 
         Args:
-            message_bus: Message bus instance for agent communication
-            config_file: Optional path to job source configuration file
+            agent_id: Unique identifier for this agent instance
             source: Optional job source to use
+            config_file: Optional path to job source configuration file
         """
-        super().__init__(agent_type="job_search", message_bus=message_bus)
+        super().__init__(agent_type="job_search", message_bus=None)
         self.service = JobSearchService(config_file, source)
         self.user_preferences = {}  # Store user preferences in memory
+
+    async def register_with_message_bus(self, message_bus: MessageBus) -> bool:
+        """Register the agent with a message bus."""
+        self._message_bus = message_bus
+        return await self.initialize()
+
+    async def stop(self) -> bool:
+        """Stop the agent."""
+        return await self.shutdown()
+
+    async def start(self) -> None:
+        """Start the agent's message processing loop."""
+        await self.initialize()
+        while self._running:
+            try:
+                message = await self._message_bus.get_next_message(
+                    self.agent_id, timeout=0.1
+                )
+                if message:
+                    await self.handle_message(message)
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
 
     async def initialize(self) -> bool:
         """Initialize the agent and subscribe to topics."""
@@ -242,7 +266,7 @@ class JobSearchAgent(BaseAgent):
             recipient_id=original_message.sender_id,
             correlation_id=str(original_message.message_id),
         )
-        await self.message_bus.send_direct(response, original_message.sender_id)
+        await self._message_bus.send_direct(response, original_message.sender_id)
 
     async def _send_error_response(self, original_message: Message, error_message: str):
         """Send an error response message."""
@@ -255,7 +279,7 @@ class JobSearchAgent(BaseAgent):
             recipient_id=original_message.sender_id,
             correlation_id=str(original_message.message_id),
         )
-        await self.message_bus.send_direct(response, original_message.sender_id)
+        await self._message_bus.send_direct(response, original_message.sender_id)
 
     async def _handle_response(self, message: Message):
         """Handle response messages."""

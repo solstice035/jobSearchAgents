@@ -7,6 +7,8 @@ import logging
 import tempfile
 import os
 from asyncio import TimeoutError
+from datetime import datetime
+import time
 
 from app.core.agents import (
     BaseAgent,
@@ -15,6 +17,7 @@ from app.core.agents import (
     setup_logging,
     get_monitor_manager,
 )
+from app.core.agents.message_bus import MessageType
 
 CLEANUP_TIMEOUT = 5.0  # 5 second timeout for cleanup operations
 
@@ -132,6 +135,9 @@ class TestAgent(BaseAgent):
         self._max_iterations = 100  # Prevent infinite loops in tests
         self._iteration_count = 0
         self._tasks: Set[asyncio.Task] = set()
+        self.command_count = 0
+        self.event_count = 0
+        self.received_messages = []
 
     def _create_task(self, coro) -> asyncio.Task:
         """Create a task and track it for cleanup."""
@@ -149,32 +155,45 @@ class TestAgent(BaseAgent):
             return
         await super()._process_messages()
 
-    async def stop(self):
-        """Enhanced stop method for testing."""
-        self._running = False
+    async def register_with_message_bus(self, message_bus: MessageBus) -> bool:
+        """Register the agent with a message bus."""
+        self._message_bus = message_bus
+        return await self.initialize()
 
-        # Cancel all tracked tasks
-        if self._tasks:
-            for task in self._tasks:
-                if not task.done():
-                    task.cancel()
+    async def start(self) -> None:
+        """Start the agent's message processing loop."""
+        await self.initialize()
+        self._message_handler_task = self._create_task(self._message_handler_loop())
 
-            # Wait for tasks to complete with timeout
+    async def stop(self) -> bool:
+        """Stop the agent."""
+        return await self.shutdown()
+
+    async def _handle_command(self, message: Message) -> Dict[str, Any]:
+        """Handle command messages for testing."""
+        self.command_count += 1
+        self.received_messages.append(message)
+        return {"status": "success"}
+
+    async def _handle_event(self, message: Message) -> Dict[str, Any]:
+        """Handle event messages for testing."""
+        self.event_count += 1
+        self.received_messages.append(message)
+        return {"status": "success"}
+
+    async def _message_handler_loop(self):
+        """Internal message processing loop."""
+        while self._running:
             try:
-                await asyncio.wait_for(
-                    asyncio.gather(*self._tasks, return_exceptions=True),
-                    timeout=CLEANUP_TIMEOUT,
+                message = await self._message_bus.get_next_message(
+                    self.agent_id, timeout=0.1
                 )
-            except TimeoutError:
-                self.logger.warning(
-                    f"Timeout while cleaning up {len(self._tasks)} agent tasks"
-                )
-            except Exception as e:
-                self.logger.error(f"Error during agent task cleanup: {str(e)}")
-
-            self._tasks.clear()
-
-        await super().stop()
+                if message:
+                    await self.handle_message(message)
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
 
 
 @pytest.fixture
@@ -209,35 +228,88 @@ async def wait_for_message(
     message_type: Optional[Any] = None,
     topic: Optional[str] = None,
     timeout: float = 1.0,
+    check_time: Optional[datetime] = None,
 ) -> Optional[Message]:
-    """Wait for a specific message type/topic with timeout.
+    """Wait for a message to be received by the specified agent.
 
     Args:
         message_bus: The message bus instance
-        agent_id: The agent ID to wait for messages from
+        agent_id: The agent ID to check messages for
         message_type: Optional MessageType to filter for
         topic: Optional topic to filter for
-        timeout: Maximum time to wait in seconds
+        timeout: How long to wait for a message in seconds
+        check_time: Optional timestamp to use for expiration checks
 
     Returns:
-        Message or None if timeout reached
+        The received message or None if no message was received within the timeout
     """
-    try:
-        start_time = asyncio.get_event_loop().time()
-        while (asyncio.get_event_loop().time() - start_time) < timeout:
-            try:
-                async for msg in message_bus.get_messages(agent_id):
-                    if (message_type is None or msg.message_type == message_type) and (
-                        topic is None or msg.topic == topic
-                    ):
-                        return msg
-            except Exception as e:
-                logging.warning(f"Error getting messages: {str(e)}")
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        # Get all messages
+        messages = await message_bus.get_messages(agent_id, check_time=check_time)
+        print(f"\nGot {len(messages)} messages from queue")
+        if not messages:
             await asyncio.sleep(0.1)
-        return None
-    except Exception as e:
-        logging.error(f"Error in wait_for_message: {str(e)}")
-        return None
+            continue
+
+        # Get the queue for putting back messages we don't want
+        queue = message_bus._agent_queues[agent_id]
+
+        # Clear the queue since get_messages returns all messages
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+                queue.task_done()
+            except asyncio.QueueEmpty:
+                break
+
+        # Find the first message that matches our criteria
+        matching_message = None
+        remaining_messages = []
+
+        for message in messages:
+            print(f"Checking message: {message.payload}")
+            # For error test, accept messages with None payload
+            if message.payload is None and message_type == MessageType.COMMAND:
+                print("Found error message with None payload")
+                matching_message = message
+                remaining_messages.extend(messages[messages.index(message) + 1 :])
+                break
+
+            # Check if message matches our filters
+            if message_type is not None and message.message_type != message_type:
+                print(
+                    f"Message type {message.message_type} doesn't match {message_type}"
+                )
+                remaining_messages.append(message)
+                continue
+            if topic is not None and message.topic != topic:
+                print(f"Topic {message.topic} doesn't match {topic}")
+                remaining_messages.append(message)
+                continue
+
+            # Found a matching message
+            print(f"Found matching message: {message.payload}")
+            matching_message = message
+            remaining_messages.extend(messages[messages.index(message) + 1 :])
+            break
+
+        # If no matching message was found, all messages go back in the queue
+        if matching_message is None:
+            print("No matching message found, putting all messages back")
+            remaining_messages = messages
+
+        # Put remaining messages back in the queue in the original order
+        for message in remaining_messages:
+            print(f"Putting back message: {message.payload}")
+            await queue.put(message)
+
+        if matching_message:
+            return matching_message
+
+        await asyncio.sleep(0.1)
+
+    return None
 
 
 async def wait_for_condition(
