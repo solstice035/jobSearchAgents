@@ -5,6 +5,7 @@ from .message_bus import (
     MessageType,
     MessagePriority,
 )
+from .protocols.agent_protocol import AgentStatus
 from .monitoring import (
     AgentLogger,
     setup_logging,
@@ -33,6 +34,8 @@ __all__ = [
     "MessageBus",
     "MessageType",
     "MessagePriority",
+    # Agent protocol
+    "AgentStatus",
     # Logging
     "AgentLogger",
     "setup_logging",
