@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Type
 
-from ..base.base_agent import BaseAgent
+from ..base_agent import BaseAgent
 from ..protocols.agent_protocol import AgentStatus, AgentMetadata, AgentCapability
 
 

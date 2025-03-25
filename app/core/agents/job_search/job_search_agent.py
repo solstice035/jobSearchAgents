@@ -35,7 +35,7 @@ class JobSearchAgent(BaseAgent):
 
     def __init__(
         self,
-        agent_id: str,
+        message_bus: MessageBus,
         config_file: Optional[str] = None,
         source: Optional[BaseJobSource] = None,
     ):
@@ -43,215 +43,139 @@ class JobSearchAgent(BaseAgent):
         Initialize the Job Search Agent.
 
         Args:
-            agent_id: Unique identifier for this agent instance
+            message_bus: Message bus instance for agent communication
             config_file: Optional path to job source configuration file
             source: Optional job source to use
         """
-        super().__init__(agent_id, "job_search")
+        super().__init__(agent_type="job_search", message_bus=message_bus)
         self.service = JobSearchService(config_file, source)
         self.user_preferences = {}  # Store user preferences in memory
 
-    async def start(self):
-        """Start the agent and subscribe to relevant topics."""
-        await super().start()
-        await self.subscribe_to_topic(JOB_SEARCH_TOPIC)
-        await self.subscribe_to_topic(JOB_MATCH_TOPIC)
+    async def initialize(self) -> bool:
+        """Initialize the agent and subscribe to topics."""
+        if await super().initialize():
+            await self.subscribe_to_topic(JOB_SEARCH_TOPIC)
+            await self.subscribe_to_topic(JOB_MATCH_TOPIC)
+            return True
+        return False
 
-    async def handle_message(self, message: Message):
-        """Handle incoming messages."""
-        try:
-            if message.message_type == MessageType.COMMAND:
-                await self._handle_command(message)
-            elif message.message_type == MessageType.EVENT:
-                await self._handle_event(message)
-            else:
-                await self._send_error_response(
-                    message, f"Unsupported message type: {message.message_type}"
-                )
-        except Exception as e:
-            await self._send_error_response(
-                message, f"Error handling message: {str(e)}"
-            )
-
-    async def _handle_command(self, message: Message):
+    async def _handle_command(self, message: Message) -> Dict[str, Any]:
         """Handle command messages."""
         command = message.payload.get("command")
         if not command:
-            await self._send_error_response(message, "No command specified")
-            return
+            return {"error": "No command specified"}
 
         try:
             if command == "save_preferences":
                 user_id = message.payload.get("user_id")
                 preferences = message.payload.get("preferences")
                 if not user_id or not preferences:
-                    await self._send_error_response(
-                        message, "User ID and preferences required"
-                    )
-                    return
+                    return {"error": "User ID and preferences required"}
 
                 self.user_preferences[user_id] = preferences
-                await self._send_response(
-                    message, {"status": "success", "message": "Preferences saved"}
-                )
+                return {"status": "success", "message": "Preferences saved"}
 
             elif command == "enable_source":
                 source_name = message.payload.get("source_name")
                 if not source_name:
-                    await self._send_error_response(message, "Source name required")
-                    return
+                    return {"error": "Source name required"}
 
                 # Enable the source in the service
                 self.service.enable_source(source_name)
-                await self._send_response(
-                    message,
-                    {"status": "success", "message": f"Source {source_name} enabled"},
-                )
+                return {"status": "success", "message": f"Source {source_name} enabled"}
 
             elif command == "update_source_priority":
                 source_name = message.payload.get("source_name")
                 priority = message.payload.get("priority")
                 if not source_name or priority is None:
-                    await self._send_error_response(
-                        message, "Source name and priority required"
-                    )
-                    return
+                    return {"error": "Source name and priority required"}
 
                 # Update source priority in the service
                 self.service.update_source_priority(source_name, priority)
-                await self._send_response(
-                    message,
-                    {
-                        "status": "success",
-                        "message": f"Priority updated for {source_name}",
-                    },
-                )
+                return {
+                    "status": "success",
+                    "message": f"Priority updated for {source_name}",
+                }
 
-            else:
-                await self._send_error_response(message, f"Unknown command: {command}")
+            return {"error": f"Unknown command: {command}"}
 
         except Exception as e:
-            await self._send_error_response(message, str(e))
+            return {"error": f"Error handling command: {str(e)}"}
 
-    async def _handle_event(self, message: Message):
+    async def _handle_event(self, message: Message) -> Dict[str, Any]:
         """Handle event messages."""
-        event_type = message.payload.get("type")
+        event_type = message.payload.get("event_type")
         if not event_type:
-            await self._send_error_response(message, "No event type specified")
-            return
+            return {"error": "No event type specified"}
 
         try:
-            if event_type == SEARCH_REQUEST:
-                await self._handle_search_request(message)
-            elif event_type == ENHANCED_SEARCH_REQUEST:
-                await self._handle_enhanced_search_request(message)
-            elif event_type == RESUME_MATCH_REQUEST:
-                await self._handle_resume_match_request(message)
-            else:
-                await self._send_error_response(
-                    message, f"Unknown event type: {event_type}"
-                )
+            if event_type == "search_request":
+                return await self._handle_search_request(message)
+            elif event_type == "enhanced_search_request":
+                return await self._handle_enhanced_search_request(message)
+            elif event_type == "resume_match_request":
+                return await self._handle_resume_match_request(message)
+
+            return {"error": f"Unknown event type: {event_type}"}
 
         except Exception as e:
-            await self._send_error_response(message, str(e))
+            return {"error": f"Error handling event: {str(e)}"}
 
-    async def _handle_search_request(self, message: Message):
-        """Handle basic job search request."""
+    async def _handle_search_request(self, message: Message) -> Dict[str, Any]:
+        """Handle basic search request."""
         params = message.payload.get("params", {})
 
-        # Validate required parameters
-        if "keywords" not in params:
-            await self._send_error_response(message, "Keywords are required")
-            return
+        if "query" not in params:
+            return {"error": "Search query is required"}
 
         try:
-            # Perform the search
-            jobs = await self.service.search(
-                query=params["keywords"],
+            results = await self.service.search_jobs(
+                query=params["query"],
                 location=params.get("location"),
-                filters={
-                    "remote": params.get("remote", False),
-                    "recency": params.get("recency"),
-                    "experience_level": params.get("experience_level"),
-                },
+                job_type=params.get("job_type"),
+                date_posted=params.get("date_posted"),
             )
 
-            # Format results
-            response = {
-                "results": jobs,  # Direct list of jobs
-                "metadata": {
-                    "timestamp": datetime.now().isoformat(),
-                    "search_criteria": params,
-                },
-            }
-
-            # Send results to both the results topic and as a direct response
-            await self._publish_results(response, message)
-            await self._send_response(message, response)
+            await self._publish_results(results, message)
+            return {"status": "success", "message": "Search completed"}
 
         except Exception as e:
-            await self._send_error_response(message, f"Search failed: {str(e)}")
+            return {"error": f"Search failed: {str(e)}"}
 
-    async def _handle_enhanced_search_request(self, message: Message):
-        """Handle enhanced job search request."""
+    async def _handle_enhanced_search_request(self, message: Message) -> Dict[str, Any]:
+        """Handle enhanced search request with user preferences."""
         params = message.payload.get("params", {})
 
-        # Validate required parameters
-        if "keywords" not in params or "user_id" not in params:
-            await self._send_error_response(
-                message, "Keywords and user_id are required"
-            )
-            return
+        if "query" not in params or "user_id" not in params:
+            return {"error": "Search query and user ID are required"}
 
         try:
             # Get user preferences
-            user_id = params["user_id"]
-            preferences = self.user_preferences.get(user_id, {})
+            preferences = self.user_preferences.get(params["user_id"], {})
 
-            # Enhance search with preferences
-            enhanced_query = self._enhance_search_query(params["keywords"], preferences)
+            # Enhance query with preferences
+            enhanced_query = self._enhance_search_query(params["query"], preferences)
 
-            # Perform the search
-            jobs = await self.service.search(
+            # Perform search
+            results = await self.service.search_jobs(
                 query=enhanced_query,
                 location=params.get("location"),
-                filters={
-                    "remote": params.get("remote", False),
-                    "recency": params.get("recency"),
-                    "experience_level": params.get("experience_level"),
-                },
+                job_type=params.get("job_type"),
+                date_posted=params.get("date_posted"),
             )
 
-            # Format results
-            response = {
-                "results": jobs,  # Direct list of jobs
-                "metadata": {
-                    "timestamp": datetime.now().isoformat(),
-                    "search_criteria": params,
-                    "preferences_used": bool(preferences),
-                    "enhanced_query": enhanced_query,
-                },
-            }
-
-            # Send results to both the results topic and as a direct response
-            await self._publish_results(response, message)
-            await self._send_response(message, response)
+            await self._publish_results(results, message)
+            return {"status": "success", "message": "Enhanced search completed"}
 
         except Exception as e:
-            await self._send_error_response(
-                message, f"Enhanced search failed: {str(e)}"
-            )
+            return {"error": f"Enhanced search failed: {str(e)}"}
 
-    async def _handle_resume_match_request(self, message: Message):
+    async def _handle_resume_match_request(self, message: Message) -> Dict[str, Any]:
         """Handle resume match request."""
         params = message.payload.get("params", {})
 
-        # Validate required parameters
         if "job_description" not in params or "resume_text" not in params:
-            await self._send_error_response(
-                message, "Job description and resume text are required"
-            )
-            return
+            return {"error": "Job description and resume text are required"}
 
         try:
             # Perform the match analysis
@@ -259,12 +183,10 @@ class JobSearchAgent(BaseAgent):
                 resume_text=params["resume_text"],
                 job_description=params["job_description"],
             )
-
-            # Send response
-            await self._send_response(message, match_results)
+            return match_results
 
         except Exception as e:
-            await self._send_error_response(message, f"Resume match failed: {str(e)}")
+            return {"error": f"Resume match failed: {str(e)}"}
 
     def _enhance_search_query(
         self, base_query: str, preferences: Dict[str, Any]
@@ -305,7 +227,7 @@ class JobSearchAgent(BaseAgent):
             priority=MessagePriority.NORMAL,
             correlation_id=str(original_message.message_id),
         )
-        await self.message_bus.publish(response)
+        await self._message_bus.publish(response)
 
     async def _send_response(
         self, original_message: Message, response_data: Dict[str, Any]

@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from typing import AsyncGenerator, Generator
+from typing import AsyncGenerator, Generator, Dict, Any
 
 import logging
 import tempfile
@@ -53,24 +53,27 @@ def monitor_manager():
 class TestAgent(BaseAgent):
     """A simple agent implementation for testing."""
 
-    def __init__(self, agent_id: str, agent_type: str = "test_agent"):
-        super().__init__(agent_id, agent_type)
+    def __init__(self, agent_type: str = "test_agent", message_bus=None):
+        super().__init__(agent_type=agent_type, message_bus=message_bus)
         self.received_messages = []
         self.command_count = 0
         self.query_count = 0
         self.event_count = 0
 
-    async def _handle_command(self, message):
+    async def _handle_command(self, message: Message) -> Dict[str, Any]:
         self.command_count += 1
         self.received_messages.append(message)
+        return {}
 
-    async def _handle_query(self, message):
+    async def _handle_query(self, message: Message) -> Dict[str, Any]:
         self.query_count += 1
         self.received_messages.append(message)
+        return {}
 
-    async def _handle_event(self, message):
+    async def _handle_event(self, message: Message) -> Dict[str, Any]:
         self.event_count += 1
         self.received_messages.append(message)
+        return {}
 
 
 @pytest.fixture
