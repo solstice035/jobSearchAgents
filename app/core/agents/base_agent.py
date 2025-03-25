@@ -102,7 +102,7 @@ class BaseAgent:
         self.logger.info("Agent stopped")
 
         if self.message_bus:
-            await self.message_bus.unregister_agent(self)
+            await self.message_bus.unregister_agent(self.agent_id)
             # Removed monitoring unregistration to allow metrics to be checked after stopping
 
     async def handle_message(self, message: Message) -> None:

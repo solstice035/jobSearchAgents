@@ -65,7 +65,24 @@ class MessageBus:
         """Unregister an agent"""
         try:
             if agent_id in self._agent_queues:
+                # Remove agent's queue
                 del self._agent_queues[agent_id]
+
+                # Remove agent's subscriptions
+                for topic, handlers in list(self._subscribers.items()):
+                    # Find handlers belonging to this agent
+                    agent_handlers = {
+                        h
+                        for h in handlers
+                        if getattr(h, "__self__", None)
+                        and getattr(h.__self__, "agent_id", None) == agent_id
+                    }
+                    # Remove them from the topic
+                    handlers.difference_update(agent_handlers)
+                    # Remove topic if no handlers left
+                    if not handlers:
+                        del self._subscribers[topic]
+
             return True
         except Exception:
             return False
