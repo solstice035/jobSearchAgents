@@ -115,17 +115,20 @@ async def test_logging_output(temp_log_dir, configured_logging, test_agent):
     with open(log_file, "r") as f:
         logs = [json.loads(line) for line in f]
 
-    # Verify log structure
-    assert len(logs) == 2
+    # Find our test logs (skipping initialization logs)
+    test_logs = [
+        log for log in logs if log["message"] in ["Test message", "Error message"]
+    ]
+    assert len(test_logs) == 2
 
-    info_log = logs[0]
+    info_log = test_logs[0]
     assert info_log["level"] == "INFO"
     assert info_log["message"] == "Test message"
     assert info_log["agent_id"] == test_agent.agent_id
     assert info_log["agent_type"] == test_agent.agent_type
     assert info_log["extra_fields"]["extra_field"] == "test_value"
 
-    error_log = logs[1]
+    error_log = test_logs[1]
     assert error_log["level"] == "ERROR"
     assert error_log["message"] == "Error message"
     assert error_log["extra_fields"]["error_code"] == 500

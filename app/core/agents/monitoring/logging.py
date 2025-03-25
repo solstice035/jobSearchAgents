@@ -5,38 +5,42 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import UUID
 
 
-class AgentLogFormatter(logging.Formatter):
-    """Custom formatter for agent logs"""
+class JsonFormatter(logging.Formatter):
+    """Format log records as JSON"""
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format the log record"""
-        # Add timestamp in ISO format
-        record.timestamp = datetime.fromtimestamp(record.created).isoformat()
-
-        # Extract agent context if available
-        agent_id = getattr(record, "agent_id", None)
-        agent_type = getattr(record, "agent_type", None)
-
-        # Create base log entry
+        """Format the log record as JSON"""
         log_entry = {
-            "timestamp": record.timestamp,
+            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
             "level": record.levelname,
-            "message": record.getMessage(),
+            "message": record.msg,
             "logger": record.name,
         }
 
-        # Add agent context if available
-        if agent_id:
-            log_entry["agent_id"] = agent_id
-        if agent_type:
-            log_entry["agent_type"] = agent_type
+        # Add agent info if present
+        if hasattr(record, "agent_id"):
+            log_entry["agent_id"] = record.agent_id
+        if hasattr(record, "agent_type"):
+            log_entry["agent_type"] = record.agent_type
 
-        # Add extra fields
+        # Add extra fields if present
         if hasattr(record, "extra_fields"):
-            log_entry.update(record.extra_fields)
+            log_entry["extra_fields"] = record.extra_fields
 
+        # Convert UUIDs to strings
+        def convert_uuids(obj):
+            if isinstance(obj, dict):
+                return {k: convert_uuids(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_uuids(v) for v in obj]
+            elif isinstance(obj, UUID):
+                return str(obj)
+            return obj
+
+        log_entry = convert_uuids(log_entry)
         return json.dumps(log_entry)
 
 
@@ -72,7 +76,7 @@ def setup_logging(
     config = {
         "version": 1,
         "disable_existing_loggers": False,
-        "formatters": {"agent_formatter": {"()": AgentLogFormatter}},
+        "formatters": {"agent_formatter": {"()": JsonFormatter}},
         "handlers": handlers,
         "loggers": {
             "agent": {
