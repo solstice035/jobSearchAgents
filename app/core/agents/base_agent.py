@@ -30,7 +30,7 @@ class BaseAgent:
         self.logger = AgentLogger(agent_id, agent_type)
 
         # Setup monitoring
-        self.metrics = get_monitor_manager().register_agent(agent_id)
+        self.metrics = get_monitor_manager().register_agent(agent_id, agent_type)
         self._setup_default_metrics()
 
         self.logger.info(
@@ -43,29 +43,34 @@ class BaseAgent:
 
     def _setup_default_metrics(self):
         """Setup default metrics for the agent"""
-        for metric_name, metric_type in DEFAULT_METRICS.items():
-            self.metrics.register_metric(metric_name, metric_type)
+        for metric_name, config in DEFAULT_METRICS.items():
+            self.metrics.register_metric(
+                name=metric_name,
+                type=config["type"],
+                description=config["description"],
+                unit=config["unit"],
+            )
 
         # Set initial status
         self.metrics.record_value(AGENT_STATUS, 0)  # 0 = initialized
 
-    def register_with_message_bus(self, message_bus: MessageBus) -> None:
+    async def register_with_message_bus(self, message_bus: MessageBus) -> None:
         """Register the agent with a message bus"""
         self.message_bus = message_bus
-        self.message_bus.register_agent(self)
+        await self.message_bus.register_agent(self.agent_id)
         self.logger.info("Registered with message bus")
 
-    def subscribe_to_topic(self, topic: str) -> None:
+    async def subscribe_to_topic(self, topic: str) -> None:
         """Subscribe to a topic"""
         if self.message_bus:
-            self.message_bus.subscribe(self, topic)
+            await self.message_bus.subscribe(topic, self.handle_message)
             self.subscribed_topics.add(topic)
             self.logger.info(f"Subscribed to topic: {topic}")
 
-    def unsubscribe_from_topic(self, topic: str) -> None:
+    async def unsubscribe_from_topic(self, topic: str) -> None:
         """Unsubscribe from a topic"""
         if self.message_bus and topic in self.subscribed_topics:
-            self.message_bus.unsubscribe(self, topic)
+            await self.message_bus.unsubscribe(topic, self.handle_message)
             self.subscribed_topics.remove(topic)
             self.logger.info(f"Unsubscribed from topic: {topic}")
 
@@ -92,8 +97,8 @@ class BaseAgent:
         self.logger.info("Agent stopped")
 
         if self.message_bus:
-            self.message_bus.unregister_agent(self)
-            get_monitor_manager().unregister_agent(self.agent_id)
+            await self.message_bus.unregister_agent(self)
+            # Removed monitoring unregistration to allow metrics to be checked after stopping
 
     async def handle_message(self, message: Message) -> None:
         """Handle an incoming message"""
@@ -102,15 +107,19 @@ class BaseAgent:
         try:
             # Update metrics before processing
             self.metrics.record_value(MESSAGES_PROCESSED, 1)
-            queue_size = len(self.message_bus.get_agent_queue(self.agent_id))
-            self.metrics.record_value(QUEUE_SIZE, queue_size)
+            if (
+                self.message_bus
+                and self.agent_id in self.message_bus.get_registered_agents()
+            ):
+                queue_size = self.message_bus._agent_queues[self.agent_id].qsize()
+                self.metrics.record_value(QUEUE_SIZE, queue_size)
 
             # Process message based on type
-            if message.type == MessageType.COMMAND:
+            if message.message_type == MessageType.COMMAND:
                 await self._handle_command(message)
-            elif message.type == MessageType.QUERY:
+            elif message.message_type == MessageType.QUERY:
                 await self._handle_query(message)
-            elif message.type == MessageType.EVENT:
+            elif message.message_type == MessageType.EVENT:
                 await self._handle_event(message)
 
             # Record processing time
@@ -120,8 +129,8 @@ class BaseAgent:
             self.logger.debug(
                 f"Processed message",
                 {
-                    "message_id": message.id,
-                    "message_type": message.type.name,
+                    "message_id": message.message_id,
+                    "message_type": message.message_type.name,
                     "processing_time": processing_time,
                 },
             )
@@ -130,8 +139,8 @@ class BaseAgent:
             self.logger.error(
                 f"Error processing message: {str(e)}",
                 {
-                    "message_id": message.id,
-                    "message_type": message.type.name,
+                    "message_id": message.message_id,
+                    "message_type": message.message_type.name,
                     "error_type": type(e).__name__,
                     "error_details": str(e),
                 },
@@ -159,8 +168,8 @@ class BaseAgent:
         self.logger.debug(
             f"Sent message",
             {
-                "message_id": message.id,
-                "message_type": message.type.name,
+                "message_id": message.message_id,
+                "message_type": message.message_type.name,
                 "topic": topic,
                 "target_agent": target_agent,
             },
@@ -172,14 +181,16 @@ class BaseAgent:
 
         while self._running:
             try:
+                # Allow for agent-specific periodic tasks first
+                await self._periodic_tasks()
+
                 # Process messages from queue
                 if self.message_bus:
-                    message = await self.message_bus.get_next_message(self.agent_id)
+                    message = await self.message_bus.get_next_message(
+                        self.agent_id, timeout=0.1
+                    )
                     if message:
                         await self.handle_message(message)
-
-                # Allow for agent-specific periodic tasks
-                await self._periodic_tasks()
 
             except Exception as e:
                 self.logger.error(

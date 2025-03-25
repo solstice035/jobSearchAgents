@@ -2,6 +2,7 @@ import asyncio
 import pytest
 from datetime import datetime, timedelta
 
+from app.tests.conftest import TestAgent
 from app.core.agents import (
     Message,
     MessageType,
@@ -23,10 +24,11 @@ class ProducerAgent(TestAgent):
 
     async def _periodic_tasks(self):
         if self.sent_count < self.messages_to_send:
-            message = Message(
-                id=f"msg_{self.sent_count}",
-                type=MessageType.EVENT,
-                content={"count": self.sent_count},
+            message = Message.create(
+                message_type=MessageType.EVENT,
+                sender_id=self.agent_id,
+                topic="test_topic",
+                payload={"count": self.sent_count},
                 priority=MessagePriority.NORMAL,
             )
             await self.send_message(message, topic="test_topic")
@@ -53,9 +55,9 @@ async def test_producer_consumer_flow(message_bus, monitor_manager, configured_l
     producer = ProducerAgent("producer_1")
     consumer = ConsumerAgent("consumer_1")
 
-    producer.register_with_message_bus(message_bus)
-    consumer.register_with_message_bus(message_bus)
-    consumer.subscribe_to_topic("test_topic")
+    await producer.register_with_message_bus(message_bus)
+    await consumer.register_with_message_bus(message_bus)
+    await consumer.subscribe_to_topic("test_topic")
 
     # Start agents
     producer_task = asyncio.create_task(producer.start())
@@ -89,19 +91,19 @@ async def test_producer_consumer_flow(message_bus, monitor_manager, configured_l
     consumer_metrics = monitor_manager.get_agent_metrics(consumer.agent_id)
 
     # Producer metrics
-    sent_values = producer_metrics.get_metric(MESSAGES_SENT).get_values()
+    sent_values = producer_metrics.get_metric(MESSAGES_SENT).values
     assert len(sent_values) == producer.messages_to_send
 
     # Consumer metrics
-    processed_values = consumer_metrics.get_metric(MESSAGES_PROCESSED).get_values()
+    processed_values = consumer_metrics.get_metric(MESSAGES_PROCESSED).values
     assert len(processed_values) == producer.messages_to_send
 
     # Verify processing times were recorded
-    processing_times = consumer_metrics.get_metric(PROCESSING_TIME).get_values()
+    processing_times = consumer_metrics.get_metric(PROCESSING_TIME).values
     assert len(processing_times) == producer.messages_to_send
 
     # Verify queue sizes were monitored
-    queue_sizes = consumer_metrics.get_metric(QUEUE_SIZE).get_values()
+    queue_sizes = consumer_metrics.get_metric(QUEUE_SIZE).values
     assert len(queue_sizes) > 0
 
 
@@ -123,9 +125,9 @@ async def test_system_error_handling(message_bus, monitor_manager, configured_lo
     producer = ProducerAgent("producer_2")
     error_agent = ErrorAgent("error_agent")
 
-    producer.register_with_message_bus(message_bus)
-    error_agent.register_with_message_bus(message_bus)
-    error_agent.subscribe_to_topic("test_topic")
+    await producer.register_with_message_bus(message_bus)
+    await error_agent.register_with_message_bus(message_bus)
+    await error_agent.subscribe_to_topic("test_topic")
 
     # Start agents
     producer_task = asyncio.create_task(producer.start())
