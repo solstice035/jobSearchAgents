@@ -64,3 +64,5 @@ yarn-error.log*
 
 *.mdc
 /.cursor
+
+.pytest_cache

@@ -4,7 +4,7 @@ This document details the architecture and functionality of the Job Search Agent
 
 ## Component Overview
 
-The Job Search Agent leverages the Perplexity API to perform intelligent job searches based on user queries and preferences.
+The Job Search Agent leverages the Perplexity API to perform intelligent job searches based on user **queries** and preferences.
 
 ```mermaid
 graph TD
