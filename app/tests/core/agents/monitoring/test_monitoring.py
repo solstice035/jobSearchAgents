@@ -24,11 +24,16 @@ def test_metric_registration(monitor_manager):
         assert metrics.get_metric(metric_name) is not None
 
     # Test custom metric registration
-    metrics.register_metric("custom_metric", MetricType.COUNTER)
+    metrics.register_metric(
+        name="custom_metric",
+        type=MetricType.COUNTER,
+        description="Test custom metric",
+        unit="count",
+    )
     assert metrics.get_metric("custom_metric") is not None
 
     # Test metric type
-    assert metrics.get_metric("custom_metric").metric_type == MetricType.COUNTER
+    assert metrics.get_metric("custom_metric").type == MetricType.COUNTER
 
 
 def test_metric_recording(monitor_manager):
@@ -43,13 +48,13 @@ def test_metric_recording(monitor_manager):
 
     # Check counter behavior
     messages_processed = metrics.get_metric(MESSAGES_PROCESSED)
-    values = messages_processed.get_values()
+    values = messages_processed.values
     assert len(values) == 2
     assert sum(v.value for v in values) == 2
 
     # Check gauge behavior
     queue_size = metrics.get_metric(QUEUE_SIZE)
-    values = queue_size.get_values()
+    values = queue_size.values
     assert len(values) == 1
     assert values[-1].value == 5
 
@@ -63,7 +68,7 @@ def test_metric_history_limit(monitor_manager):
     for i in range(1100):  # Limit is 1000
         metrics.record_value(MESSAGES_PROCESSED, 1)
 
-    values = metrics.get_metric(MESSAGES_PROCESSED).get_values()
+    values = metrics.get_metric(MESSAGES_PROCESSED).values
     assert len(values) == 1000  # Should be capped at 1000
 
 

@@ -14,11 +14,24 @@ class MonitoringManager:
         self._lock = threading.Lock()
         self._registered_agents: Set[str] = set()
 
-    def register_agent(self, agent_id: str) -> AgentMetrics:
+    def register_agent(
+        self, agent_id: str, agent_type: str = "unknown"
+    ) -> AgentMetrics:
         """Register an agent for monitoring"""
         with self._lock:
             if agent_id not in self._agent_metrics:
-                self._agent_metrics[agent_id] = AgentMetrics()
+                metrics = AgentMetrics(agent_id=agent_id, agent_type=agent_type)
+
+                # Register default metrics
+                for metric_name, config in DEFAULT_METRICS.items():
+                    metrics.register_metric(
+                        name=metric_name,
+                        type=config["type"],
+                        description=config["description"],
+                        unit=config["unit"],
+                    )
+
+                self._agent_metrics[agent_id] = metrics
                 self._registered_agents.add(agent_id)
             return self._agent_metrics[agent_id]
 
@@ -48,7 +61,7 @@ class MonitoringManager:
             for agent_id, metrics in self._agent_metrics.items():
                 metric = metrics.get_metric(metric_name)
                 if metric:
-                    result[agent_id] = metric.get_values()
+                    result[agent_id] = metric.values
         return result
 
     def get_active_agents(self) -> Set[str]:
@@ -77,12 +90,44 @@ ERROR_COUNT = "error_count"
 
 # Default metrics configuration
 DEFAULT_METRICS = {
-    MESSAGES_PROCESSED: MetricType.COUNTER,
-    MESSAGES_SENT: MetricType.COUNTER,
-    PROCESSING_TIME: MetricType.HISTOGRAM,
-    QUEUE_SIZE: MetricType.GAUGE,
-    MEMORY_USAGE: MetricType.GAUGE,
-    CPU_USAGE: MetricType.GAUGE,
-    AGENT_STATUS: MetricType.GAUGE,
-    ERROR_COUNT: MetricType.COUNTER,
+    MESSAGES_PROCESSED: {
+        "type": MetricType.COUNTER,
+        "description": "Number of messages processed by the agent",
+        "unit": "messages",
+    },
+    MESSAGES_SENT: {
+        "type": MetricType.COUNTER,
+        "description": "Number of messages sent by the agent",
+        "unit": "messages",
+    },
+    PROCESSING_TIME: {
+        "type": MetricType.HISTOGRAM,
+        "description": "Time taken to process messages",
+        "unit": "seconds",
+    },
+    QUEUE_SIZE: {
+        "type": MetricType.GAUGE,
+        "description": "Current size of the agent's message queue",
+        "unit": "messages",
+    },
+    MEMORY_USAGE: {
+        "type": MetricType.GAUGE,
+        "description": "Memory usage of the agent",
+        "unit": "bytes",
+    },
+    CPU_USAGE: {
+        "type": MetricType.GAUGE,
+        "description": "CPU usage of the agent",
+        "unit": "percent",
+    },
+    AGENT_STATUS: {
+        "type": MetricType.GAUGE,
+        "description": "Current status of the agent",
+        "unit": "status",
+    },
+    ERROR_COUNT: {
+        "type": MetricType.COUNTER,
+        "description": "Number of errors encountered by the agent",
+        "unit": "errors",
+    },
 }
