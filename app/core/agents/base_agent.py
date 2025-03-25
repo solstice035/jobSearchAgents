@@ -93,7 +93,12 @@ class BaseAgent:
     async def stop(self) -> None:
         """Stop the agent"""
         self._running = False
-        self.metrics.record_value(AGENT_STATUS, 2)  # 2 = stopped
+
+        # Only update status to stopped if not in error state
+        current_status = self.metrics.get_metric(AGENT_STATUS).values[-1].value
+        if current_status != -1:  # Don't overwrite error status
+            self.metrics.record_value(AGENT_STATUS, 2)  # 2 = stopped
+
         self.logger.info("Agent stopped")
 
         if self.message_bus:
@@ -105,8 +110,7 @@ class BaseAgent:
         start_time = time.time()
 
         try:
-            # Update metrics before processing
-            self.metrics.record_value(MESSAGES_PROCESSED, 1)
+            # Update queue size metric
             if (
                 self.message_bus
                 and self.agent_id in self.message_bus.get_registered_agents()
@@ -122,7 +126,8 @@ class BaseAgent:
             elif message.message_type == MessageType.EVENT:
                 await self._handle_event(message)
 
-            # Record processing time
+            # Record successful processing metrics
+            self.metrics.record_value(MESSAGES_PROCESSED, 1)
             processing_time = time.time() - start_time
             self.metrics.record_value(PROCESSING_TIME, processing_time)
 
@@ -136,6 +141,9 @@ class BaseAgent:
             )
 
         except Exception as e:
+            # Update agent status to error
+            self.metrics.record_value(AGENT_STATUS, -1)  # -1 = error
+
             self.logger.error(
                 f"Error processing message: {str(e)}",
                 {
