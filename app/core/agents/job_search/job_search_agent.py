@@ -11,9 +11,8 @@ from typing import Dict, Any, Optional
 
 from app.core.agents import BaseAgent, Message, MessageType, MessagePriority
 from app.core.agents.monitoring import MESSAGES_PROCESSED, PROCESSING_TIME
-from backend.services.job_search.job_search_agent import (
-    JobSearchAgent as JobSearchService,
-)
+from backend.services.job_search.job_search_service import JobSearchService
+from backend.services.job_search.sources.base_source import BaseJobSource
 
 # Message topics
 JOB_SEARCH_TOPIC = "job_search"
@@ -34,17 +33,22 @@ class JobSearchAgent(BaseAgent):
     communication capabilities.
     """
 
-    def __init__(self, agent_id: str, config_file: Optional[str] = None):
+    def __init__(
+        self,
+        agent_id: str,
+        config_file: Optional[str] = None,
+        source: Optional[BaseJobSource] = None,
+    ):
         """
         Initialize the Job Search Agent.
 
         Args:
             agent_id: Unique identifier for this agent instance
             config_file: Optional path to job source configuration file
+            source: Optional job source to use
         """
-        super().__init__(agent_id)
-        self.service = JobSearchService(config_file)
-        self.agent_type = "job_search"
+        super().__init__(agent_id, "job_search")
+        self.service = JobSearchService(config_file, source)
 
     async def start(self):
         """Start the agent and subscribe to relevant topics."""

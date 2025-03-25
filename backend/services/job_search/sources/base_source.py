@@ -11,74 +11,74 @@ from typing import Dict, Any, List, Optional, Mapping
 class JobSource(ABC):
     """
     Abstract base class for job data sources.
-    
+
     All job sources must implement these methods to provide a consistent
     interface for searching and retrieving job data.
     """
-    
+
     @property
     @abstractmethod
     def source_name(self) -> str:
         """
         Get the name of this job source.
-        
+
         Returns:
             The name of the job source (e.g., "Perplexity", "LinkedIn")
         """
         pass
-    
+
     @abstractmethod
     def search_jobs(
         self,
         keywords: str,
         location: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None
+        params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Search for jobs using the provided criteria.
-        
+
         Args:
             keywords: Search terms for finding jobs
             location: Optional location for the job search
             filters: Optional filters to narrow the search (e.g., job type, experience level)
             params: Optional additional parameters specific to this source
-            
+
         Returns:
             Raw search results from the source
         """
         pass
-    
+
     @abstractmethod
     def parse_results(self, raw_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Parse raw search results into a standardized format.
-        
+
         Args:
             raw_data: Raw data returned from the search_jobs method
-            
+
         Returns:
             List of parsed job listings
         """
         pass
-    
+
     @abstractmethod
     def normalize_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Normalize a single job listing to a standard schema.
-        
+
         Args:
             job_data: Job data to normalize
-            
+
         Returns:
             Normalized job data conforming to the standard schema
         """
         pass
-    
+
     def get_standard_schema(self) -> Dict[str, Any]:
         """
         Get the standard job schema all sources should conform to.
-        
+
         Returns:
             A dictionary with the standard schema fields
         """
@@ -97,5 +97,41 @@ class JobSource(ABC):
             "date_posted": None,
             "full_text": None,
             "url": None,
-            "raw_data": None
+            "raw_data": None,
         }
+
+
+class BaseJobSource(ABC):
+    """Base class for job search sources."""
+
+    @abstractmethod
+    async def search(
+        self, query: str, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for jobs using the given query and filters.
+
+        Args:
+            query: The search query string
+            filters: Optional dictionary of filters to apply to the search
+
+        Returns:
+            A list of job postings as dictionaries
+        """
+        pass
+
+    @abstractmethod
+    async def match_resume(
+        self, resume_text: str, job_description: str
+    ) -> Dict[str, Any]:
+        """
+        Match a resume against a job description.
+
+        Args:
+            resume_text: The text content of the resume
+            job_description: The job description to match against
+
+        Returns:
+            A dictionary containing the match results
+        """
+        pass

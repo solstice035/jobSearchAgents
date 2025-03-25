@@ -15,6 +15,7 @@ import uuid
 
 # Import the job source implementations
 from .sources import JobSource, PerplexityJobSource, JobSourceRegistry
+from backend.services.job_search.sources.base_source import BaseJobSource
 
 
 class JobSearchAgent:
@@ -26,12 +27,15 @@ class JobSearchAgent:
     structured format.
     """
 
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(
+        self, config_file: Optional[str] = None, source: Optional[BaseJobSource] = None
+    ):
         """
         Initialize the Job Search Agent.
 
         Args:
             config_file: Optional path to a registry configuration file
+            source: Optional job source to use. If not provided, defaults to PerplexityJobSource
         """
         # Initialize the job source registry
         self.registry = JobSourceRegistry(config_file)
@@ -50,6 +54,9 @@ class JobSearchAgent:
             os.getenv("USER_DATA_DIR", "~/.jobSearchAgent")
         )
         os.makedirs(self.preferences_dir, exist_ok=True)
+
+        self.source = source or PerplexityJobSource()
+        self.config_file = config_file
 
     def search_jobs(
         self,

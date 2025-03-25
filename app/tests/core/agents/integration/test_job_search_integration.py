@@ -5,6 +5,7 @@ Integration tests for the Job Search Agent with other system agents.
 import pytest
 import asyncio
 from datetime import datetime
+from typing import List, Dict, Any
 
 from app.core.agents import Message, MessageType, MessagePriority
 from app.core.agents.job_search.job_search_agent import (
@@ -15,6 +16,8 @@ from app.core.agents.job_search.job_search_agent import (
     SEARCH_REQUEST,
 )
 from app.tests.conftest import TestAgent
+from app.core.agents.message_bus.message_bus import MessageBus
+from backend.services.job_search.sources.base_source import BaseJobSource
 
 
 class CareerCoachAgent(TestAgent):
@@ -56,11 +59,53 @@ class DocumentAgent(TestAgent):
             await self.send_message(response)
 
 
+class MockJobSource(BaseJobSource):
+    """Mock job source for testing."""
+
+    def __init__(self):
+        self.jobs = []
+        self.search_called = False
+        self.match_called = False
+
+    async def search(
+        self, query: str, filters: Dict[str, Any] = None
+    ) -> List[Dict[str, Any]]:
+        """Mock search method."""
+        self.search_called = True
+        return [
+            {
+                "title": "Software Engineer",
+                "company": "Test Company",
+                "location": "Remote",
+                "description": "Test job description",
+                "url": "https://example.com/job/1",
+                "source": "mock",
+            }
+        ]
+
+    async def match_resume(
+        self, resume_text: str, job_description: str
+    ) -> Dict[str, Any]:
+        """Mock resume matching method."""
+        self.match_called = True
+        return {
+            "match_score": 0.85,
+            "analysis": "Test analysis",
+            "recommendations": ["Test recommendation"],
+        }
+
+
+@pytest.fixture
+def mock_job_source():
+    """Create a mock job source for testing."""
+    return MockJobSource()
+
+
 @pytest.mark.asyncio
-async def test_career_coach_integration(message_bus, monitor_manager):
+async def test_career_coach_integration(message_bus, monitor_manager, mock_job_source):
     """Test integration between Job Search and Career Coach agents."""
     # Create and setup agents
-    job_search = JobSearchAgent("job_search_1")
+    job_search = JobSearchAgent("job_search_1", source=mock_job_source)
     career_coach = CareerCoachAgent("career_coach_1")
 
     await job_search.register_with_message_bus(message_bus)
@@ -120,10 +165,12 @@ async def test_career_coach_integration(message_bus, monitor_manager):
 
 
 @pytest.mark.asyncio
-async def test_document_agent_integration(message_bus, monitor_manager):
+async def test_document_agent_integration(
+    message_bus, monitor_manager, mock_job_source
+):
     """Test integration between Job Search and Document agents."""
     # Create and setup agents
-    job_search = JobSearchAgent("job_search_2")
+    job_search = JobSearchAgent("job_search_2", source=mock_job_source)
     document_agent = DocumentAgent("document_1")
 
     await job_search.register_with_message_bus(message_bus)
@@ -176,10 +223,10 @@ async def test_document_agent_integration(message_bus, monitor_manager):
 
 
 @pytest.mark.asyncio
-async def test_multi_agent_workflow(message_bus, monitor_manager):
+async def test_multi_agent_workflow(message_bus, monitor_manager, mock_job_source):
     """Test complete workflow involving multiple agents."""
     # Create and setup agents
-    job_search = JobSearchAgent("job_search_3")
+    job_search = JobSearchAgent("job_search_3", source=mock_job_source)
     career_coach = CareerCoachAgent("career_coach_2")
     document_agent = DocumentAgent("document_2")
 

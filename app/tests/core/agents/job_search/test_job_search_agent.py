@@ -5,6 +5,7 @@ Tests for the Job Search Agent implementation.
 import pytest
 import asyncio
 from datetime import datetime
+from typing import List, Dict, Any
 
 from app.core.agents import Message, MessageType, MessagePriority
 from app.core.agents.job_search.job_search_agent import (
@@ -16,12 +17,56 @@ from app.core.agents.job_search.job_search_agent import (
     ENHANCED_SEARCH_REQUEST,
     RESUME_MATCH_REQUEST,
 )
+from app.core.agents.message_bus.message_bus import MessageBus
+from backend.services.job_search.sources.base_source import BaseJobSource
+
+
+class MockJobSource(BaseJobSource):
+    """Mock job source for testing."""
+
+    def __init__(self):
+        self.jobs = []
+        self.search_called = False
+        self.match_called = False
+
+    async def search(
+        self, query: str, filters: Dict[str, Any] = None
+    ) -> List[Dict[str, Any]]:
+        """Mock search method."""
+        self.search_called = True
+        return [
+            {
+                "title": "Software Engineer",
+                "company": "Test Company",
+                "location": "Remote",
+                "description": "Test job description",
+                "url": "https://example.com/job/1",
+                "source": "mock",
+            }
+        ]
+
+    async def match_resume(
+        self, resume_text: str, job_description: str
+    ) -> Dict[str, Any]:
+        """Mock resume matching method."""
+        self.match_called = True
+        return {
+            "match_score": 0.85,
+            "analysis": "Test analysis",
+            "recommendations": ["Test recommendation"],
+        }
 
 
 @pytest.fixture
-def job_search_agent(message_bus):
+def mock_job_source():
+    """Create a mock job source for testing."""
+    return MockJobSource()
+
+
+@pytest.fixture
+def job_search_agent(message_bus, mock_job_source):
     """Create and configure a job search agent for testing."""
-    agent = JobSearchAgent("test_job_search")
+    agent = JobSearchAgent("test_job_search", source=mock_job_source)
     return agent
 
 
