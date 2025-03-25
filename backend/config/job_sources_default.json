@@ -1,0 +1,28 @@
+{
+  "sources": {
+    "perplexity": {
+      "module": "services.job_search.sources.perplexity_source",
+      "class": "PerplexityJobSource",
+      "enabled": true,
+      "priority": 10,
+      "weight": 10,
+      "config": {
+        "model": "sonar-pro",
+        "max_jobs_per_search": 10,
+        "default_recency": "month"
+      }
+    },
+    "sample": {
+      "module": "services.job_search.sources.sample_source",
+      "class": "SampleJobSource",
+      "enabled": true,
+      "priority": 5,
+      "weight": 5,
+      "config": {
+        "mock_delay_ms": 500,
+        "error_rate": 0,
+        "max_jobs": 8
+      }
+    }
+  }
+}

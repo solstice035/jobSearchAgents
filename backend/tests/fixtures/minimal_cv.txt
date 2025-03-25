@@ -1,0 +1,12 @@
+Jane Smith
+jane.smith@example.com
+Senior Data Scientist
+
+Skills: Python, Machine Learning, Data Analysis, Communication
+
+Experience: 
+Data Scientist at TechCorp (2019-Present)
+Data Analyst at DataCo (2016-2019)
+
+Education:
+MS Data Science, MIT (2014-2016)

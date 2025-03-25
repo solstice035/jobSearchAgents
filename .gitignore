@@ -57,3 +57,8 @@ yarn-error.log*
 
 # Local data storage
 .jobSearchAgent/
+
+/docs
+
+*.mdc
+/.cursor
