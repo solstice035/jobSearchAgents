@@ -1,8 +1,7 @@
 """
-Job Search Agent module initialization.
+Job Search Agents
 
-This module provides the JobSearchAgent implementation that integrates
-with the agent framework for automated job discovery and matching.
+This package contains agents related to job searching and career development.
 """
 
 from .job_search_agent import (
@@ -14,6 +13,8 @@ from .job_search_agent import (
     ENHANCED_SEARCH_REQUEST,
     RESUME_MATCH_REQUEST,
 )
+from .cv_parser_agent import CVParserAgent
+from .career_coach_agent import CareerCoachAgent
 
 __all__ = [
     "JobSearchAgent",
@@ -23,4 +24,6 @@ __all__ = [
     "SEARCH_REQUEST",
     "ENHANCED_SEARCH_REQUEST",
     "RESUME_MATCH_REQUEST",
+    "CVParserAgent",
+    "CareerCoachAgent",
 ]
