@@ -2,6 +2,7 @@
 
 import asyncio
 import pytest
+import pytest_asyncio
 from typing import AsyncGenerator, Generator, Dict, Any, Optional, Set
 import logging
 import tempfile
@@ -60,8 +61,8 @@ def event_loop():
         asyncio.set_event_loop(None)
 
 
-@pytest.fixture
-async def message_bus() -> AsyncGenerator[MessageBus, None]:
+@pytest_asyncio.fixture
+async def message_bus():
     """Create a message bus instance for testing."""
     bus = MessageBus()
     try:
@@ -196,10 +197,10 @@ class TestAgent(BaseAgent):
                 break
 
 
-@pytest.fixture
-async def test_agent(message_bus: MessageBus) -> AsyncGenerator[TestAgent, None]:
+@pytest_asyncio.fixture
+async def test_agent(message_bus):
     """Create a test agent instance."""
-    agent = TestAgent("test_agent_1", message_bus)
+    agent = TestAgent("test_agent_1")
     try:
         # Initialize the agent
         await asyncio.wait_for(

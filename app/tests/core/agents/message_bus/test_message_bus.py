@@ -25,66 +25,75 @@ async def test_topic_subscription(message_bus, test_agent):
     """Test topic subscription and unsubscription."""
     topic = "test_topic"
 
-    # Test subscription
-    await test_agent.subscribe_to_topic(topic)
-    assert topic in test_agent.subscribed_topics
-    assert test_agent.handle_message in message_bus.get_topic_subscribers(topic)
+    try:
+        # Test subscription
+        await test_agent.subscribe_to_topic(topic)
+        assert topic in test_agent.subscribed_topics
+        assert test_agent.handle_message in message_bus.get_topic_subscribers(topic)
 
-    # Verify subscription works by sending a test message
-    test_message = Message.create(
-        message_type=MessageType.EVENT,
-        sender_id="test_sender",
-        topic=topic,
-        payload={"test": "subscription"},
-        priority=MessagePriority.NORMAL,
-    )
-    await message_bus.publish(test_message)
-    received = await wait_for_message(message_bus, test_agent.agent_id, topic=topic)
-    assert received is not None, "Subscription test message not received"
-    assert received.payload == test_message.payload
+        # Verify subscription works by sending a test message
+        test_message = Message.create(
+            message_type=MessageType.EVENT,
+            sender_id="test_sender",
+            topic=topic,
+            payload={"test": "subscription"},
+            priority=MessagePriority.NORMAL,
+        )
+        await message_bus.publish(test_message)
+        received = await wait_for_message(message_bus, test_agent.agent_id, topic=topic)
+        assert received is not None, "Subscription test message not received"
+        assert received.payload == test_message.payload
 
-    # Test unsubscription
-    await test_agent.unsubscribe_from_topic(topic)
-    assert topic not in test_agent.subscribed_topics
-    assert test_agent.handle_message not in message_bus.get_topic_subscribers(topic)
+        # Test unsubscription
+        await test_agent.unsubscribe_from_topic(topic)
+        assert topic not in test_agent.subscribed_topics
+        assert test_agent.handle_message not in message_bus.get_topic_subscribers(topic)
 
-    # Verify unsubscription works
-    await message_bus.publish(test_message)
-    received = await wait_for_message(
-        message_bus, test_agent.agent_id, topic=topic, timeout=0.5
-    )
-    assert received is None, "Message received after unsubscription"
+        # Verify unsubscription works
+        await message_bus.publish(test_message)
+        received = await wait_for_message(
+            message_bus, test_agent.agent_id, topic=topic, timeout=0.5
+        )
+        assert received is None, "Message received after unsubscription"
+    finally:
+        # Ensure cleanup
+        if topic in test_agent.subscribed_topics:
+            await test_agent.unsubscribe_from_topic(topic)
 
 
 @pytest.mark.asyncio
 async def test_direct_messaging(message_bus, test_agent):
     """Test direct messaging between agents."""
-    test_payload = {"action": "test", "data": "value"}
-    message = Message.create(
-        message_type=MessageType.COMMAND,
-        sender_id="test_sender",
-        topic="direct",
-        payload=test_payload,
-        recipient_id=test_agent.agent_id,
-        priority=MessagePriority.NORMAL,
-    )
+    try:
+        test_payload = {"action": "test", "data": "value"}
+        message = Message.create(
+            message_type=MessageType.COMMAND,
+            sender_id="test_sender",
+            topic="direct",
+            payload=test_payload,
+            recipient_id=test_agent.agent_id,
+            priority=MessagePriority.NORMAL,
+        )
 
-    # Send direct message
-    await message_bus.send_direct(message, test_agent.agent_id)
+        # Send direct message
+        await message_bus.send_direct(message, test_agent.agent_id)
 
-    # Use wait_for_message instead of get_next_message
-    received = await wait_for_message(
-        message_bus, test_agent.agent_id, message_type=MessageType.COMMAND
-    )
-    assert received is not None, "Message not received"
-    assert str(received.message_id) == str(message.message_id)
-    assert received.payload == test_payload, "Message payload does not match"
-    assert received.sender_id == "test_sender"
-    assert received.recipient_id == test_agent.agent_id
+        # Use wait_for_message instead of get_next_message
+        received = await wait_for_message(
+            message_bus, test_agent.agent_id, message_type=MessageType.COMMAND
+        )
+        assert received is not None, "Message not received"
+        assert str(received.message_id) == str(message.message_id)
+        assert received.payload == test_payload, "Message payload does not match"
+        assert received.sender_id == "test_sender"
+        assert received.recipient_id == test_agent.agent_id
 
-    await test_agent.handle_message(received)
-    assert test_agent.command_count == 1
-    assert len(test_agent.received_messages) == 1
+        await test_agent.handle_message(received)
+        assert test_agent.command_count == 1
+        assert len(test_agent.received_messages) == 1
+    finally:
+        # Clear any remaining messages
+        await message_bus.clear_all_queues()
 
 
 @pytest.mark.asyncio

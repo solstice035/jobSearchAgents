@@ -3,6 +3,7 @@ Tests for the Job Search Agent implementation.
 """
 
 import pytest
+import pytest_asyncio
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
@@ -68,26 +69,26 @@ def mock_job_source():
     return MockJobSource()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def job_search_agent(message_bus, mock_job_source):
     """Create and configure a job search agent for testing."""
     # Create the agent but don't start the run loop
     agent = JobSearchAgent("test_job_search", source=mock_job_source)
-    await agent.register_with_message_bus(message_bus)
+    try:
+        await agent.register_with_message_bus(message_bus)
 
-    # Subscribe to required topics
-    await agent.subscribe_to_topic(JOB_SEARCH_TOPIC)
-    await agent.subscribe_to_topic(JOB_MATCH_TOPIC)
+        # Subscribe to required topics
+        await agent.subscribe_to_topic(JOB_SEARCH_TOPIC)
+        await agent.subscribe_to_topic(JOB_MATCH_TOPIC)
 
-    # Instead of running the agent loop, we'll manually handle messages in the tests
-    agent._running = True  # Pretend it's running
-
-    yield agent
-
-    # Clean up
-    agent._running = False
-    await message_bus.unregister_agent(agent.agent_id)
-    await message_bus.clear_all_queues()
+        # Instead of running the agent loop, we'll manually handle messages in the tests
+        agent._running = True  # Pretend it's running
+        yield agent
+    finally:
+        # Clean up
+        agent._running = False
+        await message_bus.unregister_agent(agent.agent_id)
+        await message_bus.clear_all_queues()
 
 
 @pytest.mark.asyncio
