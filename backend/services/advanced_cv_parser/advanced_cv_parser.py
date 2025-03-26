@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from typing import BinaryIO, Dict, Any, List, Optional, Set
 from datetime import datetime
+import threading
 
 import pypdf
 from openai import OpenAI
@@ -29,7 +30,31 @@ except ImportError:
 
 
 class CVParsingError(Exception):
-    """Custom exception for CV parsing errors"""
+    """Base exception for CV parsing errors"""
+
+    pass
+
+
+class UnsupportedFormatError(CVParsingError):
+    """Raised when the CV file format is not supported"""
+
+    pass
+
+
+class EmptyFileError(CVParsingError):
+    """Raised when the CV file is empty"""
+
+    pass
+
+
+class ExtractionError(CVParsingError):
+    """Raised when data extraction fails"""
+
+    pass
+
+
+class ValidationError(CVParsingError):
+    """Raised when extracted data fails validation"""
 
     pass
 
@@ -41,12 +66,66 @@ class AdvancedCVParserService:
     """
 
     _instance = None
+    _lock = threading.Lock()
+
+    # Maximum file size in bytes (50MB)
+    MAX_FILE_SIZE = 50 * 1024 * 1024
+
+    # Precompiled regex patterns
+    EMAIL_PATTERN = re.compile(r"[\w\.-]+@[\w\.-]+\.\w+")
+    PHONE_PATTERNS = [
+        re.compile(pattern)
+        for pattern in [
+            r"(?:\+\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?){1,2}\d{3,4}[-.\s]?\d{3,4}",
+            r"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}",
+            r"\(\d{3}\)\s*\d{3}[-.\s]?\d{4}",
+            r"\d{10,12}",
+        ]
+    ]
+    LINKEDIN_PATTERNS = [
+        re.compile(pattern, re.IGNORECASE)
+        for pattern in [
+            r"linkedin\.com/in/[\w-]+",
+            r"linkedin\.com/profile/[\w-]+",
+        ]
+    ]
+    GITHUB_PATTERN = re.compile(r"github\.com/[\w-]+", re.IGNORECASE)
+    WEBSITE_PATTERNS = [
+        re.compile(pattern, re.IGNORECASE)
+        for pattern in [
+            r"https?://(?!(?:www\.)?(?:linkedin\.com|github\.com))[\w.-]+\.\w{2,}(?:/\S*)?",
+            r"(?:portfolio|website|site|blog):\s*(https?://[\w.-]+\.\w{2,}(?:/\S*)?)",
+            r"(?:www\.)?[\w-]+\.\w{2,}(?:/\S*)?",
+        ]
+    ]
+    LOCATION_PATTERNS = [
+        re.compile(pattern, re.IGNORECASE)
+        for pattern in [
+            r"(?:Location|Address|City|Located in|Based in):\s*([A-Za-z\s]+,\s*[A-Za-z\s]+)",
+            r"([A-Za-z\s]+,\s*[A-Z]{2})",
+            r"([A-Za-z\s]+,\s*[A-Za-z\s]+)",
+        ]
+    ]
+    NAME_PATTERN = re.compile(r"^[A-Z][a-z]+(?: [A-Z][a-z]+){1,2}$")
+    DATE_PATTERN = re.compile(
+        r"((?:\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}-\d{1,2}-\d{2,4}|\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4}))\s*[-–—]\s*"
+        r"((?:\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}-\d{1,2}-\d{2,4}|\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4}|Present|Current|Now))",
+        re.IGNORECASE,
+    )
+    BULLET_POINT_PATTERN = re.compile(
+        r"(?:^|\n)(?:\s*[\•\-\*\✓\+\>\★]|\d+\.)\s*([^,\n]+)(?:,|$|\n)"
+    )
+    SECTION_HEADER_PATTERN = re.compile(
+        r"(?:^|\n)(?:#+\s*)?({})(?:\s*[-–]|\s+–\s+|\s*:|\s*$|\n+)"
+    )
 
     @classmethod
     def get_instance(cls) -> "AdvancedCVParserService":
-        """Get singleton instance of the service"""
+        """Get singleton instance of the service in a thread-safe manner"""
         if cls._instance is None:
-            cls._instance = cls()
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
 
     def __init__(self):
@@ -173,34 +252,142 @@ class AdvancedCVParserService:
             Structured CV data including personal info, skills, work experience, education, etc.
 
         Raises:
-            ValueError: If the file format is not supported or parsing fails
+            UnsupportedFormatError: If the file format is not supported
+            EmptyFileError: If the file is empty
+            ExtractionError: If data extraction fails
+            ValidationError: If extracted data fails validation
+            CVParsingError: For other parsing-related errors
         """
         try:
+            # Validate file format
+            if not self.is_format_supported(filename):
+                raise UnsupportedFormatError(
+                    f"Unsupported file format: {Path(filename).suffix}. "
+                    f"Supported formats are: {', '.join(self.supported_formats)}"
+                )
+
+            # Check file size
+            file_obj.seek(0, 2)  # Seek to end
+            file_size = file_obj.tell()
+            file_obj.seek(0)  # Reset to beginning
+
+            if file_size == 0:
+                raise EmptyFileError("The CV file is empty")
+
+            if file_size > self.MAX_FILE_SIZE:
+                raise CVParsingError(
+                    f"File size ({file_size / 1024 / 1024:.1f}MB) exceeds maximum allowed size "
+                    f"({self.MAX_FILE_SIZE / 1024 / 1024:.1f}MB)"
+                )
+
+            # Log parsing start
+            self.logger.info(f"Starting CV parsing for file: {filename}")
+            self.logger.debug(f"File size: {file_size / 1024:.1f}KB")
+
             # Extract text content using the base parser
-            cv_text = self.base_parser.parse_document(file_obj, filename)
+            try:
+                cv_text = self.base_parser.parse_document(file_obj, filename)
+            except Exception as e:
+                raise ExtractionError(f"Failed to extract text from CV: {str(e)}")
 
             # Check if text extraction was successful
             if not cv_text or len(cv_text.strip()) < 20:
-                raise ValueError(
-                    "Extracted text is too short or empty. Check document format."
+                raise ExtractionError(
+                    "Extracted text is too short or empty. Check document format and content."
                 )
 
             # First pass: Extract structured data using rule-based methods
-            structured_data = self._extract_structured_data(cv_text, filename)
+            try:
+                structured_data = self._extract_structured_data(cv_text, filename)
+            except Exception as e:
+                raise ExtractionError(f"Failed to extract structured data: {str(e)}")
+
+            # Validate extracted data
+            if not self._validate_extracted_data(structured_data):
+                raise ValidationError("Extracted data failed validation checks")
 
             # Use LLM enhancement only if explicitly enabled via environment variable
             if (
                 self.api_key
                 and os.getenv("USE_LLM_ENHANCEMENT", "false").lower() == "true"
             ):
-                enhanced_data = self._enhance_with_ai(cv_text, structured_data)
-                return enhanced_data
+                try:
+                    enhanced_data = self._enhance_with_ai(cv_text, structured_data)
+                    # Validate enhanced data
+                    if not self._validate_extracted_data(enhanced_data):
+                        self.logger.warning(
+                            "AI-enhanced data failed validation, falling back to rule-based results"
+                        )
+                        return structured_data
+                    return enhanced_data
+                except Exception as e:
+                    self.logger.warning(
+                        f"AI enhancement failed: {str(e)}, falling back to rule-based results"
+                    )
+                    return structured_data
             else:
                 return structured_data
 
+        except CVParsingError:
+            raise
         except Exception as e:
-            self.logger.error(f"Error parsing CV: {str(e)}")
-            raise ValueError(f"Failed to parse CV: {str(e)}")
+            raise CVParsingError(f"Unexpected error during CV parsing: {str(e)}")
+        finally:
+            self.logger.info(f"Completed CV parsing for file: {filename}")
+
+    def _validate_extracted_data(self, data: Dict[str, Any]) -> bool:
+        """
+        Validate the structure and content of extracted data.
+
+        Args:
+            data: The extracted CV data to validate
+
+        Returns:
+            bool: True if validation passes, False otherwise
+        """
+        try:
+            # Check required top-level keys
+            required_keys = {
+                "personal_information",
+                "skills",
+                "work_experience",
+                "education",
+            }
+            if not all(key in data for key in required_keys):
+                self.logger.error("Missing required top-level keys in extracted data")
+                return False
+
+            # Validate personal information
+            personal_info = data["personal_information"]
+            if not isinstance(personal_info, dict):
+                self.logger.error("Personal information must be a dictionary")
+                return False
+
+            # Validate skills
+            skills = data["skills"]
+            if not isinstance(skills, dict) or not all(
+                key in skills for key in ["technical", "soft"]
+            ):
+                self.logger.error(
+                    "Skills must be a dictionary with 'technical' and 'soft' keys"
+                )
+                return False
+
+            # Validate work experience
+            if not isinstance(data["work_experience"], list):
+                self.logger.error("Work experience must be a list")
+                return False
+
+            # Validate education
+            if not isinstance(data["education"], list):
+                self.logger.error("Education must be a list")
+                return False
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error during data validation: {str(e)}")
+            return False
 
     def _extract_structured_data(
         self, cv_text: str, filename: str = ""
@@ -259,7 +446,17 @@ class AdvancedCVParserService:
         return structured_data
 
     def _extract_personal_information(self, cv_text: str) -> Dict[str, Optional[str]]:
-        """Extract personal information from CV text."""
+        """
+        Extract personal information from CV text.
+
+        Args:
+            cv_text: The CV text to extract information from
+
+        Returns:
+            Dictionary containing personal information fields
+        """
+        self.logger.debug("Starting personal information extraction")
+
         personal_info = {
             "name": None,
             "email": None,
@@ -270,43 +467,37 @@ class AdvancedCVParserService:
             "website": None,
         }
 
-        email_matches = re.findall(r"[\w\.-]+@[\w\.-]+\.\w+", cv_text)
+        # Extract email
+        email_matches = self.EMAIL_PATTERN.findall(cv_text)
         if email_matches:
             personal_info["email"] = email_matches[0]
+            self.logger.debug("Found email address")
 
-        phone_patterns = [
-            r"(?:\+\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?){1,2}\d{3,4}[-.\s]?\d{3,4}",
-            r"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}",
-            r"\(\d{3}\)\s*\d{3}[-.\s]?\d{4}",
-            r"\d{10,12}",
-        ]
-        for pattern in phone_patterns:
-            phone_matches = re.findall(pattern, cv_text)
+        # Extract phone number
+        for pattern in self.PHONE_PATTERNS:
+            phone_matches = pattern.findall(cv_text)
             if phone_matches:
                 personal_info["phone"] = phone_matches[0]
+                self.logger.debug("Found phone number")
                 break
 
-        linkedin_patterns = [
-            r"linkedin\.com/in/[\w-]+",
-            r"linkedin\.com/profile/[\w-]+",
-        ]
-        for pattern in linkedin_patterns:
-            linkedin_matches = re.findall(pattern, cv_text, re.IGNORECASE)
+        # Extract LinkedIn profile
+        for pattern in self.LINKEDIN_PATTERNS:
+            linkedin_matches = pattern.findall(cv_text)
             if linkedin_matches:
                 personal_info["linkedin"] = linkedin_matches[0]
+                self.logger.debug("Found LinkedIn profile")
                 break
 
-        github_matches = re.findall(r"github\.com/[\w-]+", cv_text, re.IGNORECASE)
+        # Extract GitHub profile
+        github_matches = self.GITHUB_PATTERN.findall(cv_text)
         if github_matches:
             personal_info["github"] = github_matches[0]
+            self.logger.debug("Found GitHub profile")
 
-        website_patterns = [
-            r"https?://(?!(?:www\.)?(?:linkedin\.com|github\.com))[\w.-]+\.\w{2,}(?:/\S*)?",
-            r"(?:portfolio|website|site|blog):\s*(https?://[\w.-]+\.\w{2,}(?:/\S*)?)",
-            r"(?:www\.)?[\w-]+\.\w{2,}(?:/\S*)?",
-        ]
-        for pattern in website_patterns:
-            website_matches = re.findall(pattern, cv_text, re.IGNORECASE)
+        # Extract website
+        for pattern in self.WEBSITE_PATTERNS:
+            website_matches = pattern.findall(cv_text)
             if website_matches:
                 for url in website_matches:
                     if isinstance(url, tuple):
@@ -316,21 +507,20 @@ class AdvancedCVParserService:
                         and "github.com" not in url.lower()
                     ):
                         personal_info["website"] = url
+                        self.logger.debug("Found personal website")
                         break
                 if personal_info["website"]:
                     break
 
-        location_patterns = [
-            r"(?:Location|Address|City|Located in|Based in):\s*([A-Za-z\s]+,\s*[A-Za-z\s]+)",
-            r"([A-Za-z\s]+,\s*[A-Z]{2})",
-            r"([A-Za-z\s]+,\s*[A-Za-z\s]+)",
-        ]
-        for pattern in location_patterns:
-            location_matches = re.findall(pattern, cv_text, re.IGNORECASE)
-            location_matches = re.findall(pattern, cv_text, re.IGNORECASE)
+        # Extract location
+        for pattern in self.LOCATION_PATTERNS:
+            location_matches = pattern.findall(cv_text)
             if location_matches:
                 personal_info["location"] = location_matches[0].strip()
+                self.logger.debug("Found location")
                 break
+
+        # Extract name from first few lines
         lines = cv_text.split("\n")
         for i in range(min(5, len(lines))):
             line = lines[i].strip()
@@ -338,13 +528,22 @@ class AdvancedCVParserService:
                 term in line.lower() for term in ["resume", "cv", "curriculum", "vitae"]
             ):
                 if (
-                    re.match(r"^[A-Z][a-z]+(?: [A-Z][a-z]+){1,2}$", line)
+                    self.NAME_PATTERN.match(line)
                     and "@" not in line
                     and "://" not in line
                     and not re.search(r"\d", line)
                 ):
                     personal_info["name"] = line
+                    self.logger.debug("Found name")
                     break
+
+        # Log extraction results
+        found_fields = [
+            field for field, value in personal_info.items() if value is not None
+        ]
+        self.logger.info(
+            f"Personal information extraction completed. Found {len(found_fields)} fields: {', '.join(found_fields)}"
+        )
 
         return personal_info
 
