@@ -37,6 +37,7 @@ class CareerCoachAgent(BaseAgent):
     def __init__(self, message_bus: MessageBus):
         """Initialize the career coach agent."""
         super().__init__("career_coach", message_bus)
+        self.agent_id = "career_coach"  # Override UUID with fixed ID
 
         # Initialize the career coach service
         self.service = CareerCoachService()
@@ -57,21 +58,25 @@ class CareerCoachAgent(BaseAgent):
                 name="create_coaching_session",
                 description="Create a new career coaching session",
                 parameters={"user_id": "string"},
+                required_resources=["openai_api"],
             ),
             AgentCapability(
                 name="process_message",
                 description="Process a message in an existing coaching session",
                 parameters={"session_id": "string", "message": "string"},
+                required_resources=["openai_api"],
             ),
             AgentCapability(
                 name="analyze_cv",
                 description="Analyze a CV and integrate insights into coaching session",
                 parameters={"session_id": "string", "cv_text": "string"},
+                required_resources=["openai_api", "cv_parser"],
             ),
             AgentCapability(
                 name="generate_roadmap",
                 description="Generate a personalized career roadmap",
                 parameters={"session_id": "string"},
+                required_resources=["openai_api"],
             ),
         ]
 
@@ -132,6 +137,7 @@ class CareerCoachAgent(BaseAgent):
                     return {
                         "status": "error",
                         "message": f"Unsupported command topic: {message.topic}",
+                        "error_type": "unsupported_topic",
                     }
                 return await handler(message)
 
@@ -141,12 +147,14 @@ class CareerCoachAgent(BaseAgent):
                     return {
                         "status": "error",
                         "message": f"Unsupported query topic: {message.topic}",
+                        "error_type": "unsupported_topic",
                     }
                 return await handler(message)
 
             return {
                 "status": "error",
                 "message": f"Unsupported message type: {message.message_type}",
+                "error_type": "unsupported_type",
             }
 
         except ValidationError as e:
@@ -192,9 +200,12 @@ class CareerCoachAgent(BaseAgent):
             logger.info(f"Created coaching session: {result.get('session_id')}")
             return {"status": "success", "data": result}
 
+        except ValidationError as e:
+            logger.warning(f"Validation error: {str(e)}")
+            return {"status": "error", "message": str(e), "error_type": "validation"}
         except Exception as e:
             logger.error(f"Failed to create coaching session: {str(e)}", exc_info=True)
-            raise
+            return {"status": "error", "message": str(e), "error_type": "internal"}
 
     async def _handle_process_message(self, message: Message) -> Dict[str, Any]:
         """Handle process message command."""
@@ -214,9 +225,12 @@ class CareerCoachAgent(BaseAgent):
             logger.debug(f"Message processed for session: {session_id}")
             return {"status": "success", "data": result}
 
+        except ValidationError as e:
+            logger.warning(f"Validation error: {str(e)}")
+            return {"status": "error", "message": str(e), "error_type": "validation"}
         except Exception as e:
             logger.error(f"Failed to process message: {str(e)}", exc_info=True)
-            raise
+            return {"status": "error", "message": str(e), "error_type": "internal"}
 
     async def _handle_analyze_cv(self, message: Message) -> Dict[str, Any]:
         """Handle CV analysis command."""
@@ -236,9 +250,12 @@ class CareerCoachAgent(BaseAgent):
             logger.info(f"CV analysis completed for session: {session_id}")
             return {"status": "success", "data": result}
 
+        except ValidationError as e:
+            logger.warning(f"Validation error: {str(e)}")
+            return {"status": "error", "message": str(e), "error_type": "validation"}
         except Exception as e:
             logger.error(f"Failed to analyze CV: {str(e)}", exc_info=True)
-            raise
+            return {"status": "error", "message": str(e), "error_type": "internal"}
 
     async def _handle_generate_roadmap(self, message: Message) -> Dict[str, Any]:
         """Handle roadmap generation command."""

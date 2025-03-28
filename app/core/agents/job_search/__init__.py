@@ -13,8 +13,15 @@ from .job_search_agent import (
     ENHANCED_SEARCH_REQUEST,
     RESUME_MATCH_REQUEST,
 )
-from .cv_parser_agent import CVParserAgent
-from .career_coach_agent import CareerCoachAgent
+
+try:
+    from .cv_parser_agent import CVParserAgent
+except ImportError:
+    CVParserAgent = None
+try:
+    from .career_coach_agent import CareerCoachAgent
+except ImportError:
+    CareerCoachAgent = None
 
 __all__ = [
     "JobSearchAgent",
